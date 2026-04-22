@@ -1,4 +1,5 @@
 const { app, BrowserWindow, screen } = require('electron');
+const path = require('path');
 require('./server.js');
 
 let win;
@@ -20,6 +21,7 @@ app.whenReady().then(() => {
         skipTaskbar: true,
         resizable: false,
         hasShadow: false,
+        icon: path.join(__dirname, 'build', 'icon256.ico'),
         webPreferences: {
             nodeIntegration: true,
             contextIsolation: false,
