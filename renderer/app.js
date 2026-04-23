@@ -266,7 +266,7 @@ function tickProgress() {
 
     // 가사 싱크
     if (currentLyrics.length > 0) {
-        const { prev, current, next, idx } = getLyricContext(progress + 600);
+        const { prev, current, next, idx } = getLyricContext(progress + 200);
         if (idx !== lastLyricIdx) {
             lastLyricIdx = idx;
             updateLyrics(prev, current, next);
@@ -313,22 +313,29 @@ async function syncWithServer() {
         }
 
         // 곡 변경 감지
-        if (track.title !== lastTitle) {
+        if (track.title && track.title !== 'YouTube Music' && track.title !== lastTitle) {
             lastTitle = track.title;
             lastLyricIdx = -1;
             currentLyrics = [];
 
             const trackInfo = document.getElementById('track-info');
             const lyricsContainer = document.getElementById('lyrics-container');
-            trackInfo.classList.add('fade');
-            lyricsContainer.classList.add('fade');
+            
+            if (trackInfo && lyricsContainer) {
+                trackInfo.classList.add('fade');
+                lyricsContainer.classList.add('fade');
+            }
 
             await new Promise(r => setTimeout(r, 400));
 
             document.getElementById('title').textContent = track.title;
-            document.getElementById('artist').textContent = track.artist;
-            trackInfo.classList.remove('fade');
-            lyricsContainer.classList.remove('fade');
+            
+            document.getElementById('artist').textContent = track.artist || 'Unknown Artist';
+            
+            if (trackInfo && lyricsContainer) {
+                trackInfo.classList.remove('fade');
+                lyricsContainer.classList.remove('fade');
+            }
 
             fetchLyrics(track.title, track.artist, track.album);
 
