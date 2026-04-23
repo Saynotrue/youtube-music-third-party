@@ -168,25 +168,25 @@ async function startEQ() {
             analyser.getByteFrequencyData(dataArray);
 
             bars.forEach((bar, index) => {
-                    // Tampermonkey에서 보낸 소리 크기 (0~255)
-                    let value = dataArray[index] || 0;
+                // Tampermonkey에서 보낸 소리 크기 (0~255)
+                let value = dataArray[index] || 0;
 
-                    if (visualizerMode === 'BARS') {
-                        // 🚀 수정됨: value / 15 -> value / 6 으로 변경 (움직임 폭 약 2.5배 증가)
-                        // value가 최대치(255)일 때 높이가 약 42px이 되어 가사 바(44px)에 꽉 차게 됩니다.
-                        let height = Math.min(18, 3 + (value / 8));
-                        bar.style.height = height + 'px';
-                        bar.style.transform = 'translateY(0)';
-                        bar.style.borderRadius = '1px';
-                    } else {
-                        // 모드 2: 물결(Wave) 형태에 실제 소리 크기 반영
-                        bar.style.height = '4px';
-                        bar.style.borderRadius = '50%';
-                        // 🚀 수정됨: 진폭(위아래로 움직이는 폭) 계산을 더 크게 키움
-                        const offset = Math.sin(now / 150 + index) * (value / 8 + 3);
-                        bar.style.transform = `translateY(${offset}px)`;
-                    }
-                });
+                if (visualizerMode === 'BARS') {
+                    // 🚀 수정됨: value / 15 -> value / 6 으로 변경 (움직임 폭 약 2.5배 증가)
+                    // value가 최대치(255)일 때 높이가 약 42px이 되어 가사 바(44px)에 꽉 차게 됩니다.
+                    let height = Math.min(18, 3 + (value / 8));
+                    bar.style.height = height + 'px';
+                    bar.style.transform = 'translateY(0)';
+                    bar.style.borderRadius = '1px';
+                } else {
+                    // 모드 2: 물결(Wave) 형태에 실제 소리 크기 반영
+                    bar.style.height = '4px';
+                    bar.style.borderRadius = '50%';
+                    // 🚀 수정됨: 진폭(위아래로 움직이는 폭) 계산을 더 크게 키움
+                    const offset = Math.sin(now / 150 + index) * (value / 8 + 3);
+                    bar.style.transform = `translateY(${offset}px)`;
+                }
+            });
         }
 
         renderFrame();
@@ -332,7 +332,7 @@ async function syncWithServer() {
 
             fetchLyrics(track.title, track.artist, track.album);
 
-            const color = extractColor(albumArtEl); 
+            const color = extractColor(albumArtEl);
             document.documentElement.style.setProperty('--theme-color', `rgb(${color})`);
         }
 
@@ -358,7 +358,7 @@ function startEQ() {
     try {
         // 앞서 server.js에 추가한 8889 포트로 연결
         wsClient = new WebSocket('ws://127.0.0.1:8889');
-        
+
         wsClient.onopen = () => {
             // 내가 렌더러(가사 바)임을 서버에 알림
             wsClient.send(JSON.stringify({ type: 'register_renderer' }));
@@ -371,47 +371,56 @@ function startEQ() {
 
         wsClient.onmessage = (event) => {
             const msg = JSON.parse(event.data);
-            
+
             if (msg.type === 'eq_data' && isPlaying) {
                 const dataArray = msg.data;
                 const now = Date.now();
-                
+
                 document.getElementById('equalizer').style.alignItems = 'center';
-                
+
                 bars.forEach((bar, index) => {
-                    // 1. 밸런싱 완전 해제: 억제 없이 원본 데이터(rawValue)를 그대로 사용
                     let rawValue = dataArray[index] || 0;
-                    
+
                     // 빠른 반응성(0.6) 유지
                     smoothedValues[index] = (smoothedValues[index] * 0.4) + (rawValue * 0.6);
                     let value = smoothedValues[index];
 
                     if (visualizerMode === 'BARS') {
-                        bar.style.height = '16px'; 
-                        
-                        // 2. 민감도 롤백: 분모를 100으로 설정해 소리가 클 때 시원하게 뻗어나가도록 함
-                        let scale = Math.max(0.2, value / 100); 
-                        
-                        // 3. 🚀 핵심: 저음역대(및 전체) 막대의 '최대치' 제한
-                        if (index < 3) {
-                            // 앞쪽 저음역대 막대들은 최대 1.75배 (약 28px)까지만 커질 수 있게 천장을 막음
-                            scale = Math.min(scale, 1.75);
-                        } else {
-                            // 나머지 막대들도 가사 바를 아예 뚫지 않도록 2.0배 (32px)에서 천장을 막음
-                            scale = Math.min(scale, 2.0);
-                        }
-                        
-                        bar.style.transform = `scaleY(${scale})`;
+                        bar.style.height = '16px'; // 기본 높이 16px
+
+                        // 🚀 1. 기본 비율 맞추기
+                        // Web Audio API의 기본 최대치는 255입니다.
+                        // (value / 255)를 하면 0.0 ~ 1.0 사이의 값이 됩니다.
+                        // 여기에 목표 최대 스케일인 1.75 (16px * 1.75 = 28px)를 곱해줍니다.
+                        let baseScale = (value / 255) * 1.75;
+
+                        // 최소 스케일 보장 (막대가 아예 사라지지 않게)
+                        baseScale = Math.max(0.2, baseScale);
+
+                        // 🚀 2. 고음역대 가중치 (Boost) 주기
+                        // 오른쪽 바(고음역대)로 갈수록 소리 에너지가 작으므로 가중치를 줍니다.
+                        // index 0(저음)은 가중치 1.0, 마지막 index(고음)는 가중치 2.5를 받게 됩니다.
+                        // 1.5 부분의 숫자를 조절하여 고음역대가 튀는 정도를 맞출 수 있습니다.
+                        let boostMultiplier = 1 + (index / (bars.length - 1)) * 1.5;
+
+                        // 🚀 3. 최종 스케일 계산 및 최대치 제한
+                        let finalScale = baseScale * boostMultiplier;
+
+                        // 아무리 가중치를 받아도 최대 스케일 1.75 (28px)를 넘지 못하게 컷!
+                        // 이렇게 하면 28px을 넘어가려 할 때 28px에서 멈춰있는 것처럼 보이게 됩니다.
+                        finalScale = Math.min(finalScale, 1.75);
+
+                        bar.style.transform = `scaleY(${finalScale})`;
                         bar.style.borderRadius = '2px';
                     } else {
-                        // 물결(WAVE) 모드는 전체 평균으로 작동하므로 밸런싱 해제의 영향을 받아 자연스럽게 커짐
+                        // 물결(WAVE) 모드 유지
                         let totalVolume = 0;
                         smoothedValues.forEach(val => totalVolume += val);
                         let avgVolume = totalVolume / 10;
 
                         bar.style.height = '4px';
                         bar.style.borderRadius = '50%';
-                        
+
                         let offset = Math.sin((now / 150) + index) * ((avgVolume / 25) + 2);
                         bar.style.transform = `scaleY(1) translateY(${offset}px)`;
                     }
@@ -421,7 +430,7 @@ function startEQ() {
 
         wsClient.onerror = () => {
             // 소켓 연결 실패 시 가짜 애니메이션 대신 정지 상태로 둠
-            stopEQ(); 
+            stopEQ();
         };
 
     } catch (e) {
