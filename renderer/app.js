@@ -286,7 +286,7 @@ async function syncWithServer() {
             lastSyncTime = null;
             stopEQ();
             document.getElementById('btn-play-pause').textContent = '▶';
-            if (!isPausedDisplayed) {       // 처음 한 번만 업데이트
+            if (!isPausedDisplayed) {
                 isPausedDisplayed = true;
                 updateLyrics('', '⏸', '');
             }
@@ -296,31 +296,23 @@ async function syncWithServer() {
         document.getElementById('btn-play-pause').textContent = '⏸';
         isPausedDisplayed = false;
 
-        // 서버에서 받은 progress로 로컬 기준점 동기화
-        localProgress = track.progress;
-        lastSyncTime = performance.now();
-        isPlaying = true;
-        trackDuration = track.duration;
+        // 🚀 변경된 부분: 곡이 바뀌었는지 '먼저' 확인합니다.
+        if (track.title && track.title !== lastTitle) {
+            
+            // 💡 핵심 해결 로직: 곡이 막 바뀌었는데 진행 시간이 5초(5000ms) 이상이다?
+            // 이건 유튜브 뮤직 UI가 아직 덜 바뀐 '이전 곡의 끝부분' 시간입니다. 강제로 0으로 리셋!
+            if (track.progress > 5000) {
+                localProgress = 0;
+            } else {
+                localProgress = track.progress;
+            }
 
-        // 앨범 아트
-        const albumArtEl = document.getElementById('album-art');
-        if (track.albumArt && albumArtEl.src !== track.albumArt) {
-            albumArtEl.src = track.albumArt;
-            albumArtEl.onload = () => {
-                albumArtEl.classList.add('visible');
-                applyGradient(albumArtEl);
-            };
-        }
-
-        // 곡 변경 감지
-        if (track.title && track.title !== 'YouTube Music' && track.title !== lastTitle) {
             lastTitle = track.title;
             lastLyricIdx = -1;
             currentLyrics = [];
 
             const trackInfo = document.getElementById('track-info');
             const lyricsContainer = document.getElementById('lyrics-container');
-            
             if (trackInfo && lyricsContainer) {
                 trackInfo.classList.add('fade');
                 lyricsContainer.classList.add('fade');
@@ -329,9 +321,7 @@ async function syncWithServer() {
             await new Promise(r => setTimeout(r, 400));
 
             document.getElementById('title').textContent = track.title;
-            
             document.getElementById('artist').textContent = track.artist || 'Unknown Artist';
-            
             if (trackInfo && lyricsContainer) {
                 trackInfo.classList.remove('fade');
                 lyricsContainer.classList.remove('fade');
@@ -339,8 +329,31 @@ async function syncWithServer() {
 
             fetchLyrics(track.title, track.artist, track.album);
 
-            const color = extractColor(albumArtEl);
-            document.documentElement.style.setProperty('--theme-color', `rgb(${color})`);
+        } else {
+            // 곡이 바뀌지 않았을 때는 정상적으로 서버 시간을 동기화합니다.
+            // (보너스 팁) 사용자가 유튜브 뮤직에서 직접 뒤로 되감기 했을 때 가사도 즉시 돌아오게 만듭니다.
+            if (track.progress < localProgress - 2000) {
+                lastLyricIdx = -1; 
+            }
+            localProgress = track.progress;
+        }
+
+        lastSyncTime = performance.now();
+        isPlaying = true;
+        trackDuration = track.duration;
+
+        // 앨범 아트
+        const albumArtEl = document.getElementById('album-art');
+        if (track.albumArt && albumArtEl.src !== track.albumArt) {
+            albumArtEl.src = track.albumArt;
+            
+            albumArtEl.onload = () => {
+                albumArtEl.classList.add('visible');
+                applyGradient(albumArtEl);
+                
+                const color = extractColor(albumArtEl);
+                document.documentElement.style.setProperty('--theme-color', `rgb(${color})`);
+            };
         }
 
         startEQ();
