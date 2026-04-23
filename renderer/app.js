@@ -4,6 +4,7 @@ let isFetchingLyrics = false;
 let lastLyricIdx = -1;
 let eqInterval = null;
 let isPausedDisplayed = false;
+let userSyncOffset = 0;
 
 // 로컬 progress 추적
 let localProgress = 0;
@@ -266,7 +267,7 @@ function tickProgress() {
 
     // 가사 싱크
     if (currentLyrics.length > 0) {
-        const { prev, current, next, idx } = getLyricContext(progress + 200);
+        const { prev, current, next, idx } = getLyricContext(progress + 300 + userSyncOffset);
         if (idx !== lastLyricIdx) {
             lastLyricIdx = idx;
             updateLyrics(prev, current, next);
@@ -310,6 +311,7 @@ async function syncWithServer() {
             lastTitle = track.title;
             lastLyricIdx = -1;
             currentLyrics = [];
+            userSyncOffset = 0;
 
             const trackInfo = document.getElementById('track-info');
             const lyricsContainer = document.getElementById('lyrics-container');
@@ -466,6 +468,37 @@ function stopEQ() {
         bar.style.transform = 'translateY(0)';
         bar.style.borderRadius = '1px';
     });
+}
+
+// ─── 단축키 설정 (가사 싱크 조절) ──────────────────────
+document.addEventListener('keydown', (e) => {
+    // 만약 다른 단축키 기능이 있다면 충돌하지 않게 조건을 겁니다
+    if (e.key === 'ArrowRight') {
+        userSyncOffset += 100; // 가사를 0.1초 '미래'로 당김 (가사가 빨리 나옴)
+        showSyncMessage(`싱크 +${userSyncOffset}ms`); // (선택) 화면에 메시지 띄우기
+    } else if (e.key === 'ArrowLeft') {
+        userSyncOffset -= 100; // 가사를 0.1초 '과거'로 미룸 (가사가 늦게 나옴)
+        showSyncMessage(`싱크 ${userSyncOffset}ms`);
+    }
+});
+
+// (선택 사항) 화면 가운데에 "+100ms"라고 잠깐 띄워주는 알림 함수
+function showSyncMessage(msg) {
+    let msgEl = document.getElementById('sync-msg');
+    if (!msgEl) {
+        msgEl = document.createElement('div');
+        msgEl.id = 'sync-msg';
+        msgEl.style.cssText = 'position:absolute; top:10px; right:10px; background:rgba(0,0,0,0.7); color:white; padding:5px 10px; border-radius:5px; font-size:12px; transition: opacity 0.3s; z-index:9999;';
+        document.body.appendChild(msgEl);
+    }
+    msgEl.textContent = msg;
+    msgEl.style.opacity = '1';
+    
+    // 1.5초 뒤에 사라짐
+    clearTimeout(msgEl.hideTimeout);
+    msgEl.hideTimeout = setTimeout(() => {
+        msgEl.style.opacity = '0';
+    }, 1500);
 }
 
 // ─── 시작 ────────────────────────────────────────────────
