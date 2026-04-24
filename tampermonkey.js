@@ -18,7 +18,6 @@
     // 1. 상태 및 가사 전송 (1초마다 가사 바에 현재 상태 알려주기)
     // =====================================================================
     setInterval(() => {
-        // 🚀 수정됨: 'video.html5-main-video'로 진짜 음악 소스만 정확히 타겟팅합니다.
         const video = document.querySelector('video.html5-main-video');
         const titleEl = document.querySelector('ytmusic-player-bar .title') || document.querySelector('yt-formatted-string.title');
         const bylineEl = document.querySelector('ytmusic-player-bar .byline');

@@ -1,18 +1,18 @@
 let currentLyrics = [];
 let lastTitle = '';
+let lastArtist = '';
 let isFetchingLyrics = false;
 let lastLyricIdx = -1;
-let eqInterval = null;
 let isPausedDisplayed = false;
 let userSyncOffset = 0;
 
-// 로컬 progress 추적
+// 로컬 재생 상태 추적
 let localProgress = 0;
 let lastSyncTime = null;
 let isPlaying = false;
 let trackDuration = 0;
 
-// ─── 색상 추출 ───────────────────────────────────────────
+// --- 색상 추출 ---
 function extractColor(imgEl) {
     const canvas = document.createElement('canvas');
     canvas.width = 10; canvas.height = 10;
@@ -31,21 +31,21 @@ function applyGradient(imgEl) {
     const color = extractColor(imgEl);
     const [r, g, b] = color.split(',').map(Number);
 
-    // 밝기 계산 (0~255, 128 이상이면 밝은 색)
+    // 배경 밝기 계산 (YIQ 공식)
     const brightness = (r * 299 + g * 587 + b * 114) / 1000;
     const isLight = brightness > 128;
 
     document.getElementById('bar').style.background =
         `linear-gradient(90deg, rgba(${color}, 0.9) 0%, rgba(${color}, 0.5) 25%, rgba(15,15,15,0.92) 55%)`;
 
-    // 텍스트 색상 전환
+    // 텍스트 대비 색상 적용
     document.getElementById('title').style.color = isLight ? '#000' : '#fff';
     document.getElementById('artist').style.color = isLight
         ? 'rgba(0,0,0,0.6)'
         : 'rgba(255,255,255,0.5)';
 }
 
-// ─── LRC 파싱 ────────────────────────────────────────────
+// --- LRC 파싱 ---
 function parseLRC(lrc) {
     const timeRegex = /\[(\d{2}):(\d{2})\.(\d{2,3})\]/g;
     const result = [];
@@ -62,7 +62,7 @@ function parseLRC(lrc) {
     return result.sort((a, b) => a.time - b.time);
 }
 
-// ─── 가사 컨텍스트 ───────────────────────────────────────
+// --- 가사 컨텍스트 반환 ---
 function getLyricContext(progress) {
     let idx = 0;
     for (let i = 0; i < currentLyrics.length; i++) {
@@ -77,7 +77,7 @@ function getLyricContext(progress) {
     };
 }
 
-// ─── 가사 업데이트 ───────────────────────────────────────
+// --- 가사 UI 렌더링 ---
 function updateLyrics(prev, current, next) {
     const prevEl = document.getElementById('prev-lyric');
     const currentEl = document.getElementById('current-lyric');
@@ -107,13 +107,14 @@ function updateLyrics(prev, current, next) {
     }, 200);
 }
 
-// ─── 가사 fetch ──────────────────────────────────────────
-async function fetchLyrics(title, artist, album) {
-    if (isFetchingLyrics) return;
-    isFetchingLyrics = true;
-    currentLyrics = [];
-    lastLyricIdx = -1;
-    updateLyrics('', '🎵', '');
+// --- 가사 데이터 Fetch ---
+async function fetchLyrics(title, artist, album, retryCount = 0) {
+    // 진행 중 곡/아티스트 변경 시 요청 중단
+    if (title !== lastTitle || artist !== lastArtist) return;
+
+    if (retryCount === 0) {
+        updateLyrics('', '🎵 가사 찾는 중...', '');
+    }
 
     try {
         const res = await fetch(
@@ -121,128 +122,47 @@ async function fetchLyrics(title, artist, album) {
             `title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}&album=${encodeURIComponent(album)}`
         ).then(r => r.json());
 
-        currentLyrics = res.lyrics ? parseLRC(res.lyrics) : [];
-        if (!currentLyrics.length) updateLyrics('', '가사 없음', '');
-    } catch (e) {
-        console.error('가사 fetch 실패:', e);
-        updateLyrics('', '가사 없음', '');
-    } finally {
-        isFetchingLyrics = false;
-    }
-}
+        // API 응답 후 데이터 정합성 재확인
+        if (title !== lastTitle || artist !== lastArtist) return;
 
-// ─── 이퀄라이저 ─────────────────────────────────────────
-let audioCtx = null;
-let analyser = null;
-let realAudioInterval = null;
+        const parsedLyrics = res.lyrics ? parseLRC(res.lyrics) : [];
 
-async function startEQ() {
-    // 이미 실행 중이면 중복 실행 방지
-    if (audioCtx) return;
-
-    try {
-        // 1. Mac의 기본 오디오 입력(마이크 혹은 BlackHole) 스트림 가져오기
-        const stream = await navigator.mediaDevices.getUserMedia({
-            audio: true, // 오디오 입력 허용
-            video: false
-        });
-
-        // 2. 오디오 분석기(Analyser) 세팅
-        audioCtx = new AudioContext();
-        const source = audioCtx.createMediaStreamSource(stream);
-        analyser = audioCtx.createAnalyser();
-
-        analyser.fftSize = 64; // 해상도 조절
-        analyser.smoothingTimeConstant = 0.2;
-        source.connect(analyser);
-        // 주의: source.connect(audioCtx.destination)은 절대 하지 마세요! (하울링 발생)
-
-        const dataArray = new Uint8Array(analyser.frequencyBinCount);
-        const bars = document.querySelectorAll('#equalizer .bar');
-
-        // 3. 실시간 렌더링 루프 (기존 setInterval 대신 requestAnimationFrame 사용)
-        function renderFrame() {
-            if (!audioCtx) return; // 중지 상태면 루프 종료
-            requestAnimationFrame(renderFrame);
-
-            // 현재 주파수 데이터 가져오기 (0 ~ 255)
-            analyser.getByteFrequencyData(dataArray);
-
-            bars.forEach((bar, index) => {
-                // Tampermonkey에서 보낸 소리 크기 (0~255)
-                let value = dataArray[index] || 0;
-
-                if (visualizerMode === 'BARS') {
-                    // 🚀 수정됨: value / 15 -> value / 6 으로 변경 (움직임 폭 약 2.5배 증가)
-                    // value가 최대치(255)일 때 높이가 약 42px이 되어 가사 바(44px)에 꽉 차게 됩니다.
-                    let height = Math.min(18, 3 + (value / 8));
-                    bar.style.height = height + 'px';
-                    bar.style.transform = 'translateY(0)';
-                    bar.style.borderRadius = '1px';
-                } else {
-                    // 모드 2: 물결(Wave) 형태에 실제 소리 크기 반영
-                    bar.style.height = '4px';
-                    bar.style.borderRadius = '50%';
-                    // 🚀 수정됨: 진폭(위아래로 움직이는 폭) 계산을 더 크게 키움
-                    const offset = Math.sin(now / 150 + index) * (value / 8 + 3);
-                    bar.style.transform = `translateY(${offset}px)`;
-                }
-            });
+        if (parsedLyrics.length > 0) {
+            currentLyrics = parsedLyrics;
+            lastLyricIdx = -1; 
+        } else {
+            if (retryCount < 2) {
+                console.log(`[Fetch 지연] 2초 후 ${retryCount + 1}차 재시도`);
+                setTimeout(() => fetchLyrics(title, artist, album, retryCount + 1), 2000);
+                return;
+            }
+            updateLyrics('', '가사 없음', '');
         }
-
-        renderFrame();
-
     } catch (e) {
-        console.error('오디오 캡처 실패 (시스템 설정에서 마이크 권한을 확인하세요):', e);
-        // 권한이 없으면 임시로 기존 가짜 애니메이션 실행
-        fallbackFakeEQ();
+        // 네트워크 에러 시 정합성 확인 후 재시도
+        if (title !== lastTitle || artist !== lastArtist) return;
+
+        if (retryCount < 2) {
+            setTimeout(() => fetchLyrics(title, artist, album, retryCount + 1), 2000);
+            return;
+        }
+        updateLyrics('', '가사 없음', '');
     }
 }
 
-function stopEQ() {
-    if (audioCtx) {
-        audioCtx.close();
-        audioCtx = null;
-    }
-    document.querySelectorAll('#equalizer .bar').forEach(bar => {
-        bar.style.height = '3px';
-    });
-}
-
-// 오디오 권한이 거부되었을 때를 대비한 가짜 애니메이션 (기존 코드)
-let fakeEqInterval = null;
-function fallbackFakeEQ() {
-    if (fakeEqInterval) return;
-    const bars = document.querySelectorAll('#equalizer .bar');
-    fakeEqInterval = setInterval(() => {
-        bars.forEach(bar => {
-            bar.style.height = (Math.floor(Math.random() * 8) + 3) + 'px';
-        });
-    }, 150);
-}
-
-function stopEQ() {
-    clearInterval(eqInterval);
-    eqInterval = null;
-    document.querySelectorAll('#equalizer .bar').forEach(bar => {
-        bar.style.height = '3px';
-    });
-}
-
-// ─── 컨트롤 버튼 ─────────────────────────────────────────
+// --- 미디어 컨트롤 ---
 document.getElementById('btn-play-pause').addEventListener('click', async () => {
-    // 로컬 상태로 바로 판단 - 서버 왕복 없음
     await fetch('http://127.0.0.1:8888/play-pause', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ playing: isPlaying })
     });
-    setTimeout(syncWithServer, 300);
+    setTimeout(syncWithServer, 300); // UI 반응성 개선을 위한 조기 동기화
 });
 
 document.getElementById('btn-prev').addEventListener('click', async () => {
     await fetch('http://127.0.0.1:8888/previous', { method: 'POST' });
-    setTimeout(syncWithServer, 500); // 0.5초 후 동기화
+    setTimeout(syncWithServer, 500); 
 });
 
 document.getElementById('btn-next').addEventListener('click', async () => {
@@ -250,7 +170,7 @@ document.getElementById('btn-next').addEventListener('click', async () => {
     setTimeout(syncWithServer, 500);
 });
 
-// ─── 로컬 progress 루프 (requestAnimationFrame) ──────────
+// --- 로컬 Progress 업데이트 루프 ---
 function tickProgress() {
     if (!isPlaying || lastSyncTime === null) {
         requestAnimationFrame(tickProgress);
@@ -261,11 +181,9 @@ function tickProgress() {
     const elapsed = now - lastSyncTime;
     const progress = Math.min(localProgress + elapsed, trackDuration);
 
-    // 진행바 업데이트
     document.getElementById('progress-fill').style.width =
         `${(progress / trackDuration) * 100}%`;
 
-    // 가사 싱크
     if (currentLyrics.length > 0) {
         const { prev, current, next, idx } = getLyricContext(progress + 300 + userSyncOffset);
         if (idx !== lastLyricIdx) {
@@ -277,7 +195,7 @@ function tickProgress() {
     requestAnimationFrame(tickProgress);
 }
 
-// ─── 서버 polling (3초마다 동기화) ──────────────────────
+// --- 서버 상태 동기화 ---
 async function syncWithServer() {
     try {
         const track = await fetch('http://127.0.0.1:8888/current-track').then(r => r.json());
@@ -296,44 +214,51 @@ async function syncWithServer() {
 
         document.getElementById('btn-play-pause').textContent = '⏸';
         isPausedDisplayed = false;
+        
+        const isSongChanged = track.title !== lastTitle;
+        const isArtistChanged = track.artist !== lastArtist;
 
-        // 🚀 변경된 부분: 곡이 바뀌었는지 '먼저' 확인합니다.
-        if (track.title && track.title !== lastTitle) {
+        if (track.title && track.title !== 'YouTube Music' && 
+            track.artist && track.artist.trim() !== '' && 
+            (isSongChanged || isArtistChanged)) {
             
-            // 💡 핵심 해결 로직: 곡이 막 바뀌었는데 진행 시간이 5초(5000ms) 이상이다?
-            // 이건 유튜브 뮤직 UI가 아직 덜 바뀐 '이전 곡의 끝부분' 시간입니다. 강제로 0으로 리셋!
-            if (track.progress > 5000) {
-                localProgress = 0;
+            // 지연 로드된 아티스트 정보의 경우 UI 텍스트만 갱신 (가사 초기화 방지)
+            if (!isSongChanged && isArtistChanged && currentLyrics.length > 0) {
+                lastArtist = track.artist;
+                document.getElementById('artist').textContent = track.artist;
             } else {
-                localProgress = track.progress;
+                if (isSongChanged) {
+                    localProgress = track.progress > 5000 ? 0 : track.progress;
+                }
+
+                lastTitle = track.title;
+                lastArtist = track.artist;
+                lastLyricIdx = -1;
+                currentLyrics = [];
+                if (typeof userSyncOffset !== 'undefined') userSyncOffset = 0;
+
+                const trackInfo = document.getElementById('track-info');
+                const lyricsContainer = document.getElementById('lyrics-container');
+                
+                if (trackInfo && lyricsContainer) {
+                    trackInfo.classList.add('fade');
+                    lyricsContainer.classList.add('fade');
+                }
+
+                await new Promise(r => setTimeout(r, 400));
+
+                document.getElementById('title').textContent = track.title;
+                document.getElementById('artist').textContent = track.artist || 'Unknown Artist';
+                
+                if (trackInfo && lyricsContainer) {
+                    trackInfo.classList.remove('fade');
+                    lyricsContainer.classList.remove('fade');
+                }
+
+                fetchLyrics(track.title, track.artist, track.album);
             }
-
-            lastTitle = track.title;
-            lastLyricIdx = -1;
-            currentLyrics = [];
-            userSyncOffset = 0;
-
-            const trackInfo = document.getElementById('track-info');
-            const lyricsContainer = document.getElementById('lyrics-container');
-            if (trackInfo && lyricsContainer) {
-                trackInfo.classList.add('fade');
-                lyricsContainer.classList.add('fade');
-            }
-
-            await new Promise(r => setTimeout(r, 400));
-
-            document.getElementById('title').textContent = track.title;
-            document.getElementById('artist').textContent = track.artist || 'Unknown Artist';
-            if (trackInfo && lyricsContainer) {
-                trackInfo.classList.remove('fade');
-                lyricsContainer.classList.remove('fade');
-            }
-
-            fetchLyrics(track.title, track.artist, track.album);
-
         } else {
-            // 곡이 바뀌지 않았을 때는 정상적으로 서버 시간을 동기화합니다.
-            // (보너스 팁) 사용자가 유튜브 뮤직에서 직접 뒤로 되감기 했을 때 가사도 즉시 돌아오게 만듭니다.
+            // 수동 탐색(되감기 등) 시 가사 인덱스 재계산 처리
             if (track.progress < localProgress - 2000) {
                 lastLyricIdx = -1; 
             }
@@ -344,7 +269,7 @@ async function syncWithServer() {
         isPlaying = true;
         trackDuration = track.duration;
 
-        // 앨범 아트
+        // 앨범 아트 갱신 및 UI 테마 적용
         const albumArtEl = document.getElementById('album-art');
         if (track.albumArt && albumArtEl.src !== track.albumArt) {
             albumArtEl.src = track.albumArt;
@@ -365,30 +290,25 @@ async function syncWithServer() {
     }
 }
 
-// ─── 이퀄라이저 (Realtime Web Socket 기반) ─────────────────
-let visualizerMode = 'BARS'; // 현재 비주얼라이저 상태 ('BARS' 또는 'WAVE')
+// --- 이퀄라이저 (WebSocket 기반) ---
+let visualizerMode = 'BARS';
 let wsClient = null;
 
-// 이퀄라이저 아이콘을 클릭하면 실시간으로 모드가 바뀝니다.
 document.getElementById('equalizer').addEventListener('click', () => {
     visualizerMode = visualizerMode === 'BARS' ? 'WAVE' : 'BARS';
 });
 
 function startEQ() {
-    if (wsClient) return; // 이미 연결되어 있으면 패스
+    if (wsClient) return; 
 
     try {
-        // 앞서 server.js에 추가한 8889 포트로 연결
         wsClient = new WebSocket('ws://127.0.0.1:8889');
 
         wsClient.onopen = () => {
-            // 내가 렌더러(가사 바)임을 서버에 알림
             wsClient.send(JSON.stringify({ type: 'register_renderer' }));
         };
 
         const bars = document.querySelectorAll('#equalizer .bar');
-
-        // 스무딩 배열 유지
         let smoothedValues = new Array(10).fill(0);
 
         wsClient.onmessage = (event) => {
@@ -403,39 +323,27 @@ function startEQ() {
                 bars.forEach((bar, index) => {
                     let rawValue = dataArray[index] || 0;
 
-                    // 빠른 반응성(0.6) 유지
+                    // 값 스무딩 (반응성 유지)
                     smoothedValues[index] = (smoothedValues[index] * 0.4) + (rawValue * 0.6);
                     let value = smoothedValues[index];
 
                     if (visualizerMode === 'BARS') {
-                        bar.style.height = '16px'; // 기본 높이 16px
+                        bar.style.height = '16px'; 
 
-                        // 🚀 1. 기본 비율 맞추기
-                        // Web Audio API의 기본 최대치는 255입니다.
-                        // (value / 255)를 하면 0.0 ~ 1.0 사이의 값이 됩니다.
-                        // 여기에 목표 최대 스케일인 1.75 (16px * 1.75 = 28px)를 곱해줍니다.
+                        // 기본 스케일 산출 및 최소값 보장
                         let baseScale = (value / 255) * 1.75;
-
-                        // 최소 스케일 보장 (막대가 아예 사라지지 않게)
                         baseScale = Math.max(0.2, baseScale);
 
-                        // 🚀 2. 고음역대 가중치 (Boost) 주기
-                        // 오른쪽 바(고음역대)로 갈수록 소리 에너지가 작으므로 가중치를 줍니다.
-                        // index 0(저음)은 가중치 1.0, 마지막 index(고음)는 가중치 2.5를 받게 됩니다.
-                        // 1.5 부분의 숫자를 조절하여 고음역대가 튀는 정도를 맞출 수 있습니다.
+                        // 고음역대 보정 가중치 적용
                         let boostMultiplier = 1 + (index / (bars.length - 1)) * 1.5;
 
-                        // 🚀 3. 최종 스케일 계산 및 최대치 제한
+                        // 최종 스케일 계산 및 상한 제한
                         let finalScale = baseScale * boostMultiplier;
-
-                        // 아무리 가중치를 받아도 최대 스케일 1.75 (28px)를 넘지 못하게 컷!
-                        // 이렇게 하면 28px을 넘어가려 할 때 28px에서 멈춰있는 것처럼 보이게 됩니다.
                         finalScale = Math.min(finalScale, 1.75);
 
                         bar.style.transform = `scaleY(${finalScale})`;
                         bar.style.borderRadius = '2px';
                     } else {
-                        // 물결(WAVE) 모드 유지
                         let totalVolume = 0;
                         smoothedValues.forEach(val => totalVolume += val);
                         let avgVolume = totalVolume / 10;
@@ -451,18 +359,16 @@ function startEQ() {
         };
 
         wsClient.onerror = () => {
-            // 소켓 연결 실패 시 가짜 애니메이션 대신 정지 상태로 둠
             stopEQ();
         };
 
     } catch (e) {
-        // 에러 발생 시 정지 상태로 둠
         stopEQ();
     }
 }
 
 function stopEQ() {
-    // 노래가 멈췄거나 연결에 실패했을 때 막대 모양 초기화 (기본 3px 높이)
+    // 연결 종료 또는 정지 상태 시 UI 초기화
     document.querySelectorAll('#equalizer .bar').forEach(bar => {
         bar.style.height = '3px';
         bar.style.transform = 'translateY(0)';
@@ -470,19 +376,18 @@ function stopEQ() {
     });
 }
 
-// ─── 단축키 설정 (가사 싱크 조절) ──────────────────────
+// --- 가사 싱크 커스텀 (단축키) ---
 document.addEventListener('keydown', (e) => {
-    // 만약 다른 단축키 기능이 있다면 충돌하지 않게 조건을 겁니다
     if (e.key === 'ArrowRight') {
-        userSyncOffset += 100; // 가사를 0.1초 '미래'로 당김 (가사가 빨리 나옴)
-        showSyncMessage(`싱크 +${userSyncOffset}ms`); // (선택) 화면에 메시지 띄우기
+        userSyncOffset += 100;
+        showSyncMessage(`싱크 +${userSyncOffset}ms`);
     } else if (e.key === 'ArrowLeft') {
-        userSyncOffset -= 100; // 가사를 0.1초 '과거'로 미룸 (가사가 늦게 나옴)
+        userSyncOffset -= 100;
         showSyncMessage(`싱크 ${userSyncOffset}ms`);
     }
 });
 
-// (선택 사항) 화면 가운데에 "+100ms"라고 잠깐 띄워주는 알림 함수
+// 싱크 조정 알림 UI
 function showSyncMessage(msg) {
     let msgEl = document.getElementById('sync-msg');
     if (!msgEl) {
@@ -494,14 +399,13 @@ function showSyncMessage(msg) {
     msgEl.textContent = msg;
     msgEl.style.opacity = '1';
     
-    // 1.5초 뒤에 사라짐
     clearTimeout(msgEl.hideTimeout);
     msgEl.hideTimeout = setTimeout(() => {
         msgEl.style.opacity = '0';
     }, 1500);
 }
 
-// ─── 시작 ────────────────────────────────────────────────
-tickProgress();                          // RAF 루프 시작
-syncWithServer();                        // 최초 동기화
-setInterval(syncWithServer, 3000);       // 3초마다 서버 동기화
+// --- 초기화 및 실행 ---
+tickProgress();                          // 렌더링 루프 시작
+syncWithServer();                        // 초기 상태 동기화
+setInterval(syncWithServer, 3000);       // 주기적 상태 폴링

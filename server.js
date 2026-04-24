@@ -1,11 +1,14 @@
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
+const WebSocket = require('ws');
 
 const app = express();
 const PORT = process.env.PORT || 8888;
+const WS_PORT = 8889;
 
-// CORS 허용 (웹 브라우저에서 오는 요청을 받기 위해)
+// --- 미들웨어 설정 ---
+// 웹 브라우저(Tampermonkey)からの CORS 요청 허용
 app.use((req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
@@ -13,28 +16,27 @@ app.use((req, res, next) => {
 });
 app.use(express.json());
 
-// 브라우저에서 보내줄 현재 재생 상태를 저장할 변수
+// --- 전역 상태 및 연결 객체 ---
 let playerState = { playing: false };
+let commandClient = null;  // 원격 제어용 SSE 클라이언트 (Tampermonkey)
+let rendererSocket = null; // 비주얼라이저용 WS 클라이언트 (Electron UI)
 
-// 브라우저와 연결된 실시간 통신 파이프 (버튼 즉각 반응용)
-let commandClient = null;
-
-// ─── 실시간 통신 파이프 연결 (SSE) ───────────────────────
+// --- 미디어 제어 (SSE 기반) ---
+// Tampermonkey 스크립트 연결용 SSE 엔드포인트
 app.get('/command-stream', (req, res) => {
-    // 브라우저에게 "연결 끊지 말고 계속 대기해!" 라고 알려줍니다.
     res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive'
     });
-    commandClient = res; // 연결된 브라우저 기억하기
+    commandClient = res;
 
     req.on('close', () => {
-        commandClient = null; // 브라우저 창이 닫히면 기억 지우기
+        commandClient = null;
     });
 });
 
-// ─── 가사 바에서 버튼 누를 때 -> 브라우저로 즉시 쏘기! ─────
+// Electron UI -> Tampermonkey 제어 명령 릴레이
 app.post('/play-pause', (req, res) => {
     if (commandClient) commandClient.write(`data: play-pause\n\n`);
     res.json({ ok: true });
@@ -50,21 +52,24 @@ app.post('/next', (req, res) => {
     res.json({ ok: true });
 });
 
-// ─── 브라우저에서 정보 수신 ──────────────────────────────
+// --- 상태 동기화 (REST API) ---
+// Tampermonkey -> Server : 현재 재생 상태 업데이트
 app.post('/update-state', (req, res) => {
     playerState = req.body;
     res.json({ ok: true });
 });
 
-// ─── Electron 앱(app.js)으로 정보 전달 ──────────────────────
+// Server -> Electron : 최신 상태 반환 (폴링용)
 app.get('/current-track', (req, res) => {
     res.json(playerState);
 });
 
-// ─── 가사 검색 (기존 LRCLIB 유지) ───────────────────────────
+// --- 가사 Fetch (LRCLIB API 연동) ---
 app.get('/lyrics', async (req, res) => {
     const { title, artist, album } = req.query;
+    
     try {
+        // 1차 시도: Exact Match (트랙, 아티스트, 앨범)
         const { data } = await axios.get('https://lrclib.net/api/get', {
             params: { track_name: title, artist_name: artist, album_name: album }
         });
@@ -72,6 +77,7 @@ app.get('/lyrics', async (req, res) => {
     } catch { }
 
     try {
+        // 2차 시도: Search (트랙, 아티스트)
         const { data } = await axios.get('https://lrclib.net/api/search', {
             params: { track_name: title, artist_name: artist }
         });
@@ -79,31 +85,41 @@ app.get('/lyrics', async (req, res) => {
         if (found) return res.json({ lyrics: found.syncedLyrics });
     } catch { }
 
+    // 매칭 실패 시 null 반환
     res.json({ lyrics: null });
 });
 
-// ─── 실시간 오디오 비주얼라이저 중계 (WebSocket) ───────────
-const WebSocket = require('ws');
-const wss = new WebSocket.Server({ port: 8889 }); // 8889 포트 사용
-
-let rendererSocket = null;
+// --- 오디오 비주얼라이저 데이터 릴레이 (WebSocket) ---
+const wss = new WebSocket.Server({ port: WS_PORT });
 
 wss.on('connection', (ws) => {
     ws.on('message', (message) => {
-        const data = JSON.parse(message);
-        
-        // Electron 앱(가사 바)이 연결되었을 때 등록
-        if (data.type === 'register_renderer') {
-            rendererSocket = ws;
-        } 
-        // Tampermonkey에서 주파수(EQ) 데이터를 보낼 때
-        else if (data.type === 'eq_data' && rendererSocket) {
-            // Electron 앱으로 즉시 전달
-            rendererSocket.send(JSON.stringify(data));
+        try {
+            const data = JSON.parse(message);
+            
+            // 렌더러(Electron) 소켓 등록
+            if (data.type === 'register_renderer') {
+                rendererSocket = ws;
+            } 
+            // 웹(Tampermonkey) -> 렌더러(Electron) EQ 데이터 바이패스
+            else if (data.type === 'eq_data' && rendererSocket && rendererSocket.readyState === WebSocket.OPEN) {
+                rendererSocket.send(JSON.stringify(data));
+            }
+        } catch (e) {
+            console.error('WebSocket 데이터 파싱 오류:', e);
+        }
+    });
+
+    // 소켓 연결 종료 시 초기화
+    ws.on('close', () => {
+        if (rendererSocket === ws) {
+            rendererSocket = null;
         }
     });
 });
 
+// --- 서버 구동 ---
 app.listen(PORT, '127.0.0.1', () => {
-    console.log(`http://127.0.0.1:${PORT}`);
+    console.log(`[HTTP] Server running at http://127.0.0.1:${PORT}`);
+    console.log(`[ WS ] Server running at ws://127.0.0.1:${WS_PORT}`);
 });
