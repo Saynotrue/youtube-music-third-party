@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         YouTube Music Ultimate Integration (Lyrics, Visualizer, Remote)
 // @namespace    http://tampermonkey.net/
-// @version      5.1
-// @description  가사 바 앱을 위한 완벽한 통합 스크립트 (자동 재연결 기능 추가)
+// @version      5.2
+// @description  가사 바 앱을 위한 완벽한 통합 스크립트 (가짜 비디오 버그 수정)
 // @author       You
 // @match        https://music.youtube.com/*
 // @grant        GM_xmlhttpRequest
@@ -18,7 +18,8 @@
     // 1. 상태 및 가사 전송 (1초마다 가사 바에 현재 상태 알려주기)
     // =====================================================================
     setInterval(() => {
-        const video = document.querySelector('video');
+        // 🚀 수정됨: 'video.html5-main-video'로 진짜 음악 소스만 정확히 타겟팅합니다.
+        const video = document.querySelector('video.html5-main-video');
         const titleEl = document.querySelector('ytmusic-player-bar .title') || document.querySelector('yt-formatted-string.title');
         const bylineEl = document.querySelector('ytmusic-player-bar .byline');
         const imgEl = document.querySelector('ytmusic-player-bar img');
@@ -83,11 +84,11 @@
         evtSource.onerror = function (err) {
             console.log("🔴 [가사 바] 리모컨 서버 연결 끊김. 3초 후 재연결 시도...");
             evtSource.close();
-            setTimeout(connectSSE, 3000); // 3초 후 다시 연결 시도
+            setTimeout(connectSSE, 3000);
         };
     }
 
-    connectSSE(); // 최초 연결 실행
+    connectSSE();
 
     // =====================================================================
     // 3. 오디오 분석 및 비주얼라이저 로직 (자동 재연결 적용)
@@ -101,9 +102,7 @@
     let ws = null;
     let eqInterval = null;
 
-    // 이퀄라이저 웹소켓 자동 재연결 함수
     const connectWS = () => {
-        // 이미 연결 중이거나 연결되어 있으면 패스
         if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
 
         ws = new WebSocket('ws://127.0.0.1:8889');
@@ -115,9 +114,9 @@
             if (eqInterval) clearInterval(eqInterval);
 
             eqInterval = setInterval(() => {
-                const video = document.querySelector('video');
+                // 🚀 수정됨: 이퀄라이저도 가짜 비디오가 아닌 진짜 비디오에서 소리를 가져오도록 수정
+                const video = document.querySelector('video.html5-main-video');
 
-                // 곡 변경 시 비디오 소스 재연결
                 if (video && video !== currentVideo) {
                     if (mediaSource) mediaSource.disconnect();
                     currentVideo = video;
@@ -149,11 +148,11 @@
         ws.onclose = () => {
             console.log("🔴 비주얼라이저 연결 끊김. 3초 후 재접속을 시도합니다...");
             if (eqInterval) clearInterval(eqInterval);
-            setTimeout(connectWS, 3000); // 3초 후 다시 연결 시도
+            setTimeout(connectWS, 3000);
         };
 
         ws.onerror = () => {
-            ws.close(); // 에러 발생 시 명시적으로 닫아서 onclose 이벤트를 트리거함
+            ws.close();
         };
     };
 
@@ -171,7 +170,7 @@
             audioSetupDone = true;
             console.log("✅ 오디오 분석기 준비 완료");
 
-            connectWS(); // 웹소켓 연결 시작
+            connectWS();
 
         } catch (e) {
             console.error("오디오 설정 중 오류 발생:", e);
