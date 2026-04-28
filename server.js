@@ -8,7 +8,6 @@ const PORT = process.env.PORT || 8888;
 const WS_PORT = 8889;
 
 // --- 미들웨어 설정 ---
-// 웹 브라우저(Tampermonkey)からの CORS 요청 허용
 app.use((req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
@@ -67,7 +66,7 @@ app.get('/current-track', (req, res) => {
 // --- 가사 Fetch (LRCLIB API 연동) ---
 app.get('/lyrics', async (req, res) => {
     const { title, artist, album } = req.query;
-    
+
     try {
         // 1차 시도: Exact Match (트랙, 아티스트, 앨범)
         const { data } = await axios.get('https://lrclib.net/api/get', {
@@ -96,11 +95,11 @@ wss.on('connection', (ws) => {
     ws.on('message', (message) => {
         try {
             const data = JSON.parse(message);
-            
+
             // 렌더러(Electron) 소켓 등록
             if (data.type === 'register_renderer') {
                 rendererSocket = ws;
-            } 
+            }
             // 웹(Tampermonkey) -> 렌더러(Electron) EQ 데이터 바이패스
             else if (data.type === 'eq_data' && rendererSocket && rendererSocket.readyState === WebSocket.OPEN) {
                 rendererSocket.send(JSON.stringify(data));

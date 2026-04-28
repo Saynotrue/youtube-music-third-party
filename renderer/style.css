@@ -138,8 +138,8 @@ body {
 #equalizer .bar {
     width: 3px;
     height: 3px;
-    background: var(--theme-color); /* 테마 색상 변수로 교체 */
-    transition: height 0.12s cubic-bezier(0.4, 0, 0.2, 1), transform 0.12s ease, background 0.5s ease; /* 색상 스무스 전환(background 0.5s ease) 추가 */
+    background: var(--theme-color);
+    transition: height 0.12s cubic-bezier(0.4, 0, 0.2, 1), transform 0.12s ease, background 0.5s ease;
     border-radius: 3px !important;
     box-shadow: 0 0 6px var(--theme-color);
     transition: background 0.5s ease, box-shadow 0.5s ease;

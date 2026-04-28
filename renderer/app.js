@@ -129,7 +129,7 @@ async function fetchLyrics(title, artist, album, retryCount = 0) {
 
         if (parsedLyrics.length > 0) {
             currentLyrics = parsedLyrics;
-            lastLyricIdx = -1; 
+            lastLyricIdx = -1;
         } else {
             if (retryCount < 2) {
                 console.log(`[Fetch 지연] 2초 후 ${retryCount + 1}차 재시도`);
@@ -157,12 +157,12 @@ document.getElementById('btn-play-pause').addEventListener('click', async () => 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ playing: isPlaying })
     });
-    setTimeout(syncWithServer, 300); // UI 반응성 개선을 위한 조기 동기화
+    setTimeout(syncWithServer, 300);
 });
 
 document.getElementById('btn-prev').addEventListener('click', async () => {
     await fetch('http://127.0.0.1:8888/previous', { method: 'POST' });
-    setTimeout(syncWithServer, 500); 
+    setTimeout(syncWithServer, 500);
 });
 
 document.getElementById('btn-next').addEventListener('click', async () => {
@@ -185,7 +185,7 @@ function tickProgress() {
         `${(progress / trackDuration) * 100}%`;
 
     if (currentLyrics.length > 0) {
-        const { prev, current, next, idx } = getLyricContext(progress + 300 + userSyncOffset);
+        const { prev, current, next, idx } = getLyricContext(progress + 500 + userSyncOffset);
         if (idx !== lastLyricIdx) {
             lastLyricIdx = idx;
             updateLyrics(prev, current, next);
@@ -214,14 +214,14 @@ async function syncWithServer() {
 
         document.getElementById('btn-play-pause').textContent = '⏸';
         isPausedDisplayed = false;
-        
+
         const isSongChanged = track.title !== lastTitle;
         const isArtistChanged = track.artist !== lastArtist;
 
-        if (track.title && track.title !== 'YouTube Music' && 
-            track.artist && track.artist.trim() !== '' && 
+        if (track.title && track.title !== 'YouTube Music' &&
+            track.artist && track.artist.trim() !== '' &&
             (isSongChanged || isArtistChanged)) {
-            
+
             // 지연 로드된 아티스트 정보의 경우 UI 텍스트만 갱신 (가사 초기화 방지)
             if (!isSongChanged && isArtistChanged && currentLyrics.length > 0) {
                 lastArtist = track.artist;
@@ -239,7 +239,7 @@ async function syncWithServer() {
 
                 const trackInfo = document.getElementById('track-info');
                 const lyricsContainer = document.getElementById('lyrics-container');
-                
+
                 if (trackInfo && lyricsContainer) {
                     trackInfo.classList.add('fade');
                     lyricsContainer.classList.add('fade');
@@ -249,7 +249,7 @@ async function syncWithServer() {
 
                 document.getElementById('title').textContent = track.title;
                 document.getElementById('artist').textContent = track.artist || 'Unknown Artist';
-                
+
                 if (trackInfo && lyricsContainer) {
                     trackInfo.classList.remove('fade');
                     lyricsContainer.classList.remove('fade');
@@ -260,7 +260,7 @@ async function syncWithServer() {
         } else {
             // 수동 탐색(되감기 등) 시 가사 인덱스 재계산 처리
             if (track.progress < localProgress - 2000) {
-                lastLyricIdx = -1; 
+                lastLyricIdx = -1;
             }
             localProgress = track.progress;
         }
@@ -273,11 +273,11 @@ async function syncWithServer() {
         const albumArtEl = document.getElementById('album-art');
         if (track.albumArt && albumArtEl.src !== track.albumArt) {
             albumArtEl.src = track.albumArt;
-            
+
             albumArtEl.onload = () => {
                 albumArtEl.classList.add('visible');
                 applyGradient(albumArtEl);
-                
+
                 const color = extractColor(albumArtEl);
                 document.documentElement.style.setProperty('--theme-color', `rgb(${color})`);
             };
@@ -299,7 +299,7 @@ document.getElementById('equalizer').addEventListener('click', () => {
 });
 
 function startEQ() {
-    if (wsClient) return; 
+    if (wsClient) return;
 
     try {
         wsClient = new WebSocket('ws://127.0.0.1:8889');
@@ -328,7 +328,7 @@ function startEQ() {
                     let value = smoothedValues[index];
 
                     if (visualizerMode === 'BARS') {
-                        bar.style.height = '16px'; 
+                        bar.style.height = '16px';
 
                         // 기본 스케일 산출 및 최소값 보장
                         let baseScale = (value / 255) * 1.75;
@@ -398,7 +398,7 @@ function showSyncMessage(msg) {
     }
     msgEl.textContent = msg;
     msgEl.style.opacity = '1';
-    
+
     clearTimeout(msgEl.hideTimeout);
     msgEl.hideTimeout = setTimeout(() => {
         msgEl.style.opacity = '0';
