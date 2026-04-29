@@ -35,7 +35,7 @@
       ],
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
-      "icon": "build/mac_icon.png"
+      "icon": "build/apple/macOS/app-icon.png"
     },
     "win": {
       "target": [
