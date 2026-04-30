@@ -323,25 +323,31 @@ function startEQ() {
                 bars.forEach((bar, index) => {
                     let rawValue = (dataArray[index] || 0) * 0.5;
 
-                    // 값 스무딩 (반응성 유지)
-                    smoothedValues[index] = (smoothedValues[index] * 0.025) + (rawValue * 0.975);
+                    if (rawValue < smoothedValues[index]) {
+
+                        smoothedValues[index] = rawValue;
+                    } else {
+                        smoothedValues[index] = (smoothedValues[index] * 0.05) + (rawValue * 0.95);
+                    }
+
+                    smoothedValues[index] = Math.min(smoothedValues[index], 180);
+
                     let value = smoothedValues[index];
 
                     if (visualizerMode === 'BARS') {
                         bar.style.height = '16px';
 
-                        // 기본 스케일 산출 및 최소값 보장
                         let baseScale = (value / 255) * 1.75;
                         baseScale = Math.max(0.2, baseScale);
 
                         let boostMultiplier = 1 + (index / (bars.length - 1)) * 1.5;
 
                         if (index === 0) boostMultiplier *= 1.8;
-                        if (index === 1) boostMultiplier *= 1.5;
+                        if (index === 1) boostMultiplier *= 1.6;
 
-                        // 최종 스케일 계산 및 상한 제한
                         let finalScale = baseScale * boostMultiplier;
-                        finalScale = Math.min(finalScale, 1.75);
+
+                        finalScale = Math.min(finalScale, 1.8);
 
                         bar.style.transform = `scaleY(${finalScale})`;
                         bar.style.borderRadius = '2px';
@@ -349,11 +355,9 @@ function startEQ() {
                         let totalVolume = 0;
                         smoothedValues.forEach(val => totalVolume += val);
                         let avgVolume = totalVolume / 10;
-
                         bar.style.height = '4px';
                         bar.style.borderRadius = '50%';
-
-                        let offset = Math.sin((now / 150) + index) * ((avgVolume / 25) + 2);
+                        let offset = Math.sin((Date.now() / 150) + index) * ((avgVolume / 25) + 2);
                         bar.style.transform = `scaleY(1) translateY(${offset}px)`;
                     }
                 });
@@ -370,6 +374,13 @@ function startEQ() {
 }
 
 function stopEQ() {
+
+    if (wsClient) {
+        wsClient.onmessage = null; // 리스너 제거
+        wsClient.onerror = null;
+        wsClient.close();
+        wsClient = null; // 변수 초기화 (startEQ에서 새로 생성할 수 있게 함)
+    }
     // 연결 종료 또는 정지 상태 시 UI 초기화
     document.querySelectorAll('#equalizer .bar').forEach(bar => {
         bar.style.height = '3px';
