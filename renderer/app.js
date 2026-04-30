@@ -321,10 +321,10 @@ function startEQ() {
                 document.getElementById('equalizer').style.alignItems = 'center';
 
                 bars.forEach((bar, index) => {
-                    let rawValue = dataArray[index] || 0;
+                    let rawValue = (dataArray[index] || 0) * 0.5;
 
                     // 값 스무딩 (반응성 유지)
-                    smoothedValues[index] = (smoothedValues[index] * 0.4) + (rawValue * 0.6);
+                    smoothedValues[index] = (smoothedValues[index] * 0.025) + (rawValue * 0.975);
                     let value = smoothedValues[index];
 
                     if (visualizerMode === 'BARS') {
@@ -334,8 +334,10 @@ function startEQ() {
                         let baseScale = (value / 255) * 1.75;
                         baseScale = Math.max(0.2, baseScale);
 
-                        // 고음역대 보정 가중치 적용
                         let boostMultiplier = 1 + (index / (bars.length - 1)) * 1.5;
+
+                        if (index === 0) boostMultiplier *= 1.8;
+                        if (index === 1) boostMultiplier *= 1.5;
 
                         // 최종 스케일 계산 및 상한 제한
                         let finalScale = baseScale * boostMultiplier;
