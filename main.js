@@ -33,8 +33,9 @@ app.whenReady().then(() => {
     win.setAlwaysOnTop(true, 'screen-saver');
     win.loadFile('renderer/index.html');
 
-    const iconPath = path.join(__dirname, 'tray', 'trayTemplate.png');
-    const trayIcon = nativeImage.createFromPath(iconPath);
+    const isMac = process.platform === 'darwin';
+    const trayIconPath = path.join(__dirname, 'tray', 'playerTemplate.png');
+    const trayIcon = nativeImage.createFromPath(trayIconPath);
 
     trayIcon.setTemplateImage(true);
 
