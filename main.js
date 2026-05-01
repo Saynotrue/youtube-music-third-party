@@ -59,7 +59,7 @@ app.whenReady().then(() => {
     function changeTrayIcon(style) {
         currentIconStyle = style;
         const iconName = style === 'player' ? 'playerTemplate' : 'spectrumTemplate';
-        
+
         let newTrayIconPath;
         if (process.platform === 'win32') {
             // 새로 정리하신 windows 폴더 경로 적용!
@@ -70,7 +70,7 @@ app.whenReady().then(() => {
         }
 
         const newTrayIcon = nativeImage.createFromPath(newTrayIconPath);
-        
+
         if (process.platform === 'darwin') {
             newTrayIcon.setTemplateImage(true);
         }
@@ -78,15 +78,15 @@ app.whenReady().then(() => {
         tray.setImage(newTrayIcon);
     }
 
-    // 3. 메뉴에 '아이콘 스타일' 하위 메뉴 추가하기
-    const contextMenu = Menu.buildFromTemplate([
-        {
-            label: 'Bar 보이기/숨기기',
-            click: () => {
-                win.isVisible() ? win.hide() : win.show();
-            }
-        },
-        { type: 'separator' }, // 구분선
+    // 3. 메뉴에 '아이콘 스타일' 하위 메뉴 추가하기
+    const contextMenu = Menu.buildFromTemplate([
+        {
+            label: 'Bar 보이기/숨기기',
+            click: () => {
+                win.isVisible() ? win.hide() : win.show();
+            }
+        },
+        { type: 'separator' }, // 구분선
         {
             label: '아이콘 스타일',
             submenu: [
@@ -105,14 +105,14 @@ app.whenReady().then(() => {
             ]
         },
         { type: 'separator' }, // 구분선
-        {
-            label: '종료',
-            click: () => {
-                app.isQuiting = true;
-                app.quit();
-            }
-        }
-    ]);
+        {
+            label: '종료',
+            click: () => {
+                app.isQuiting = true;
+                app.quit();
+            }
+        }
+    ]);
 
     // 좌클릭 이벤트: 앱 켜기/끄기 토글
     tray.on('click', () => {
