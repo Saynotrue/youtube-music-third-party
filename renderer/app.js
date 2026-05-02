@@ -1,3 +1,5 @@
+const { ipcRenderer } = require('electron');
+
 let currentLyrics = [];
 let lastTitle = '';
 let lastArtist = '';
@@ -31,14 +33,18 @@ function applyGradient(imgEl) {
     const color = extractColor(imgEl);
     const [r, g, b] = color.split(',').map(Number);
 
-    // 배경 밝기 계산 (YIQ 공식)
     const brightness = (r * 299 + g * 587 + b * 114) / 1000;
     const isLight = brightness > 128;
 
     document.getElementById('bar').style.background =
         `linear-gradient(90deg, rgba(${color}, 0.9) 0%, rgba(${color}, 0.5) 25%, rgba(15,15,15,0.92) 55%)`;
 
-    // 텍스트 대비 색상 적용
+    const lpMode = document.getElementById('lp-mode');
+    if (lpMode) {
+        lpMode.style.background = 
+            `linear-gradient(180deg, rgb(${color}) 0%, rgb(35, 35, 35) 75%, rgb(15, 15, 15) 100%)`;
+    }
+
     document.getElementById('title').style.color = isLight ? '#000' : '#fff';
     document.getElementById('artist').style.color = isLight
         ? 'rgba(0,0,0,0.6)'
@@ -83,33 +89,42 @@ function updateLyrics(prev, current, next) {
     const currentEl = document.getElementById('current-lyric');
     const nextEl = document.getElementById('next-lyric');
     const container = document.getElementById('lyrics-container');
+    const lpCurrentEl = document.getElementById('lp-current-lyric');
 
-    [prevEl, currentEl, nextEl].forEach(el => el.style.opacity = '0');
+    [prevEl, currentEl, nextEl, lpCurrentEl].forEach(el => {
+        if(el) el.style.opacity = '0';
+    });
 
     setTimeout(() => {
-        prevEl.textContent = prev;
-        currentEl.textContent = current;
-        nextEl.textContent = next;
+        if(prevEl) prevEl.textContent = prev;
+        if(currentEl) currentEl.textContent = current;
+        if(nextEl) nextEl.textContent = next;
+        if(lpCurrentEl) lpCurrentEl.textContent = current;
+        
+        if(lpCurrentEl) lpCurrentEl.textContent = current; 
 
         requestAnimationFrame(() => {
-            const containerCenter = container.offsetWidth / 2;
-            const currentHalf = currentEl.offsetWidth / 2;
-            const gap = 32;
+            if(container && currentEl && prevEl && nextEl) {
+                const containerCenter = container.offsetWidth / 2;
+                const currentHalf = currentEl.offsetWidth / 2;
+                const gap = 32;
 
-            const prevRight = containerCenter - currentHalf - gap;
-            prevEl.style.left = (prevRight - prevEl.offsetWidth) + 'px';
+                const prevRight = containerCenter - currentHalf - gap;
+                prevEl.style.left = (prevRight - prevEl.offsetWidth) + 'px';
 
-            const nextLeft = containerCenter + currentHalf + gap;
-            nextEl.style.left = nextLeft + 'px';
+                const nextLeft = containerCenter + currentHalf + gap;
+                nextEl.style.left = nextLeft + 'px';
+            }
         });
 
-        [prevEl, currentEl, nextEl].forEach(el => el.style.opacity = '1');
+        [prevEl, currentEl, nextEl, lpCurrentEl].forEach(el => {
+            if(el) el.style.opacity = '1';
+        });
     }, 200);
 }
 
 // --- 가사 데이터 Fetch ---
 async function fetchLyrics(title, artist, album, retryCount = 0) {
-    // 진행 중 곡/아티스트 변경 시 요청 중단
     if (title !== lastTitle || artist !== lastArtist) return;
 
     if (retryCount === 0) {
@@ -122,7 +137,6 @@ async function fetchLyrics(title, artist, album, retryCount = 0) {
             `title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}&album=${encodeURIComponent(album)}`
         ).then(r => r.json());
 
-        // API 응답 후 데이터 정합성 재확인
         if (title !== lastTitle || artist !== lastArtist) return;
 
         const parsedLyrics = res.lyrics ? parseLRC(res.lyrics) : [];
@@ -139,7 +153,6 @@ async function fetchLyrics(title, artist, album, retryCount = 0) {
             updateLyrics('', '가사 없음', '');
         }
     } catch (e) {
-        // 네트워크 에러 시 정합성 확인 후 재시도
         if (title !== lastTitle || artist !== lastArtist) return;
 
         if (retryCount < 2) {
@@ -150,7 +163,7 @@ async function fetchLyrics(title, artist, album, retryCount = 0) {
     }
 }
 
-// --- 미디어 컨트롤 ---
+// --- 🎵 미디어 컨트롤 (가사 바 모드) ---
 document.getElementById('btn-play-pause').addEventListener('click', async () => {
     await fetch('http://127.0.0.1:8888/play-pause', {
         method: 'POST',
@@ -170,20 +183,59 @@ document.getElementById('btn-next').addEventListener('click', async () => {
     setTimeout(syncWithServer, 500);
 });
 
+// --- 💿 미디어 컨트롤 (LP 위젯 모드) ---
+document.getElementById('lp-btn-play')?.addEventListener('click', async () => {
+    await fetch('http://127.0.0.1:8888/play-pause', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playing: isPlaying })
+    });
+    setTimeout(syncWithServer, 300);
+});
+
+document.getElementById('lp-btn-prev')?.addEventListener('click', async () => {
+    await fetch('http://127.0.0.1:8888/previous', { method: 'POST' });
+    setTimeout(syncWithServer, 500);
+});
+
+document.getElementById('lp-btn-next')?.addEventListener('click', async () => {
+    await fetch('http://127.0.0.1:8888/next', { method: 'POST' });
+    setTimeout(syncWithServer, 500);
+});
+
 // --- 로컬 Progress 업데이트 루프 ---
+// --- 로컬 Progress 업데이트 루프 (진행 바 버그 수정본) ---
 function tickProgress() {
-    if (!isPlaying || lastSyncTime === null) {
+    // 곡 정보가 없거나 재생 중이 아니면 계산 건너뜀
+    if (!isPlaying || lastSyncTime === null || !trackDuration || trackDuration <= 0) {
         requestAnimationFrame(tickProgress);
         return;
     }
 
     const now = performance.now();
     const elapsed = now - lastSyncTime;
+    
+    // 현재 진행 시간 계산 (전체 길이를 넘지 않도록 제한)
     const progress = Math.min(localProgress + elapsed, trackDuration);
+    
+    // 퍼센트 계산 (0~100 사이로 안전하게 고정)
+    let percent = (progress / trackDuration) * 100;
+    if (isNaN(percent)) percent = 0;
+    percent = Math.max(0, Math.min(100, percent));
 
-    document.getElementById('progress-fill').style.width =
-        `${(progress / trackDuration) * 100}%`;
+    // 1. 가사 바 모드 진행 바 업데이트
+    const progressFill = document.getElementById('progress-fill');
+    if (progressFill) {
+        progressFill.style.width = `${percent}%`;
+    }
 
+    // 2. LP 위젯 모드 진행 바 업데이트 (복구 완료)
+    const lpProgressFill = document.getElementById('lp-progress-fill');
+    if (lpProgressFill) {
+        lpProgressFill.style.width = `${percent}%`;
+    }
+
+    // 가사 싱크 업데이트 로직
     if (currentLyrics.length > 0) {
         const { prev, current, next, idx } = getLyricContext(progress + 500 + userSyncOffset);
         if (idx !== lastLyricIdx) {
@@ -195,6 +247,22 @@ function tickProgress() {
     requestAnimationFrame(tickProgress);
 }
 
+// --- 화면 스타일 (위젯/바) 변경 이벤트 ---
+ipcRenderer.on('change-style', (event, style) => {
+    const barMode = document.getElementById('bar-mode');
+    const lpMode = document.getElementById('lp-mode');
+
+    if (!barMode || !lpMode) return;
+
+    if (style === 'lp') {
+        barMode.style.display = 'none';
+        lpMode.style.display = 'flex'; // block 대신 flex 적용!
+    } else {
+        barMode.style.display = 'flex';
+        lpMode.style.display = 'none';
+    }
+});
+
 // --- 서버 상태 동기화 ---
 async function syncWithServer() {
     try {
@@ -204,15 +272,26 @@ async function syncWithServer() {
             isPlaying = false;
             lastSyncTime = null;
             stopEQ();
+            
             document.getElementById('btn-play-pause').textContent = '▶';
+            
+            const lpPlayBtn = document.getElementById('lp-btn-play');
+            if (lpPlayBtn) lpPlayBtn.textContent = '▶';
+            document.getElementById('vinyl-record')?.classList.remove('playing');
+
             if (!isPausedDisplayed) {
                 isPausedDisplayed = true;
                 updateLyrics('', '⏸', '');
             }
-            return;
+            return; 
         }
 
         document.getElementById('btn-play-pause').textContent = '⏸';
+        
+        const lpPlayBtn = document.getElementById('lp-btn-play');
+        if (lpPlayBtn) lpPlayBtn.textContent = '⏸';
+        document.getElementById('vinyl-record')?.classList.add('playing');
+        
         isPausedDisplayed = false;
 
         const isSongChanged = track.title !== lastTitle;
@@ -222,10 +301,10 @@ async function syncWithServer() {
             track.artist && track.artist.trim() !== '' &&
             (isSongChanged || isArtistChanged)) {
 
-            // 지연 로드된 아티스트 정보의 경우 UI 텍스트만 갱신 (가사 초기화 방지)
             if (!isSongChanged && isArtistChanged && currentLyrics.length > 0) {
                 lastArtist = track.artist;
                 document.getElementById('artist').textContent = track.artist;
+                document.getElementById('lp-widget-artist').textContent = track.artist;
             } else {
                 if (isSongChanged) {
                     localProgress = track.progress > 5000 ? 0 : track.progress;
@@ -239,26 +318,69 @@ async function syncWithServer() {
 
                 const trackInfo = document.getElementById('track-info');
                 const lyricsContainer = document.getElementById('lyrics-container');
+                const lpTextInfo = document.querySelector('.lp-text-info'); 
+                const lpCover = document.getElementById('lp-widget-cover'); 
 
                 if (trackInfo && lyricsContainer) {
                     trackInfo.classList.add('fade');
                     lyricsContainer.classList.add('fade');
                 }
+                if (lpTextInfo) lpTextInfo.classList.add('fade');
 
                 await new Promise(r => setTimeout(r, 400));
 
                 document.getElementById('title').textContent = track.title;
                 document.getElementById('artist').textContent = track.artist || 'Unknown Artist';
+                
+                const lpTitle = document.getElementById('lp-widget-title');
+                const lpArtist = document.getElementById('lp-widget-artist');
+                if(lpTitle) lpTitle.textContent = track.title;
+                if(lpArtist) lpArtist.textContent = track.artist || 'Unknown Artist';
+
+                if (lpCover && track.albumArt && lpCover.src !== track.albumArt) {
+                    const newImg = new Image();
+                    newImg.src = track.albumArt;
+                    newImg.onload = () => {
+                        const tempImg = document.createElement('img');
+                        tempImg.src = lpCover.src;
+                        tempImg.style.position = 'absolute';
+                        tempImg.style.width = '90px';
+                        tempImg.style.height = '90px';
+                        tempImg.style.borderRadius = '50%';
+                        tempImg.style.objectFit = 'cover';
+                        tempImg.style.transition = 'opacity 0.6s ease';
+                        
+                        tempImg.style.top = '50%';
+                        tempImg.style.left = '50%';
+                        tempImg.style.transform = 'translate(-50%, -50%)';
+                        tempImg.style.zIndex = '2'; 
+                        
+                        const hole = document.querySelector('.vinyl-hole');
+                        if (hole) hole.style.zIndex = '3';
+
+                        lpCover.parentNode.appendChild(tempImg);
+                        
+                        lpCover.src = track.albumArt;
+                        
+                        tempImg.offsetHeight; 
+                        
+                        tempImg.style.opacity = '0';
+                        
+                        setTimeout(() => {
+                            if (tempImg.parentNode) tempImg.parentNode.removeChild(tempImg);
+                        }, 600);
+                    };
+                }
 
                 if (trackInfo && lyricsContainer) {
                     trackInfo.classList.remove('fade');
                     lyricsContainer.classList.remove('fade');
                 }
+                if (lpTextInfo) lpTextInfo.classList.remove('fade');
 
                 fetchLyrics(track.title, track.artist, track.album);
             }
         } else {
-            // 수동 탐색(되감기 등) 시 가사 인덱스 재계산 처리
             if (track.progress < localProgress - 2000) {
                 lastLyricIdx = -1;
             }
@@ -269,15 +391,12 @@ async function syncWithServer() {
         isPlaying = true;
         trackDuration = track.duration;
 
-        // 앨범 아트 갱신 및 UI 테마 적용
         const albumArtEl = document.getElementById('album-art');
-        if (track.albumArt && albumArtEl.src !== track.albumArt) {
+        if (track.albumArt && albumArtEl && albumArtEl.src !== track.albumArt) {
             albumArtEl.src = track.albumArt;
-
             albumArtEl.onload = () => {
                 albumArtEl.classList.add('visible');
                 applyGradient(albumArtEl);
-
                 const color = extractColor(albumArtEl);
                 document.documentElement.style.setProperty('--theme-color', `rgb(${color})`);
             };
@@ -294,9 +413,12 @@ async function syncWithServer() {
 let visualizerMode = 'BARS';
 let wsClient = null;
 
-document.getElementById('equalizer').addEventListener('click', () => {
-    visualizerMode = visualizerMode === 'BARS' ? 'WAVE' : 'BARS';
-});
+const eqEl = document.getElementById('equalizer');
+if(eqEl) {
+    eqEl.addEventListener('click', () => {
+        visualizerMode = visualizerMode === 'BARS' ? 'WAVE' : 'BARS';
+    });
+}
 
 function startEQ() {
     if (wsClient) return;
@@ -316,37 +438,32 @@ function startEQ() {
 
             if (msg.type === 'eq_data' && isPlaying) {
                 const dataArray = msg.data;
-                const now = Date.now();
 
-                document.getElementById('equalizer').style.alignItems = 'center';
+                const eqContainer = document.getElementById('equalizer');
+                if(eqContainer) eqContainer.style.alignItems = 'center';
 
                 bars.forEach((bar, index) => {
                     let rawValue = (dataArray[index] || 0) * 0.5;
 
                     if (rawValue < smoothedValues[index]) {
-
                         smoothedValues[index] = rawValue;
                     } else {
                         smoothedValues[index] = (smoothedValues[index] * 0.05) + (rawValue * 0.95);
                     }
 
                     smoothedValues[index] = Math.min(smoothedValues[index], 180);
-
                     let value = smoothedValues[index];
 
                     if (visualizerMode === 'BARS') {
                         bar.style.height = '16px';
-
                         let baseScale = (value / 255) * 1.75;
                         baseScale = Math.max(0.2, baseScale);
 
                         let boostMultiplier = 1 + (index / (bars.length - 1)) * 1.5;
-
                         if (index === 0) boostMultiplier *= 1.8;
                         if (index === 1) boostMultiplier *= 1.6;
 
                         let finalScale = baseScale * boostMultiplier;
-
                         finalScale = Math.min(finalScale, 1.8);
 
                         bar.style.transform = `scaleY(${finalScale})`;
@@ -374,14 +491,13 @@ function startEQ() {
 }
 
 function stopEQ() {
-
     if (wsClient) {
-        wsClient.onmessage = null; // 리스너 제거
+        wsClient.onmessage = null; 
         wsClient.onerror = null;
         wsClient.close();
-        wsClient = null; // 변수 초기화 (startEQ에서 새로 생성할 수 있게 함)
+        wsClient = null; 
     }
-    // 연결 종료 또는 정지 상태 시 UI 초기화
+    
     document.querySelectorAll('#equalizer .bar').forEach(bar => {
         bar.style.height = '3px';
         bar.style.transform = 'translateY(0)';
@@ -419,6 +535,6 @@ function showSyncMessage(msg) {
 }
 
 // --- 초기화 및 실행 ---
-tickProgress();                          // 렌더링 루프 시작
-syncWithServer();                        // 초기 상태 동기화
-setInterval(syncWithServer, 3000);       // 주기적 상태 폴링
+tickProgress();                          
+syncWithServer();                        
+setInterval(syncWithServer, 3000);

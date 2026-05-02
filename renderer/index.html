@@ -7,38 +7,72 @@
 </head>
 
 <body>
-  <div id="bar">
-    <img id="album-art" src="" alt="">
-    <div id="track-info">
-      <span id="title">곡을 재생해보세요</span>
-      <span id="artist"></span>
-    </div>
-    <div id="lyrics-container">
-      <span id="prev-lyric"></span>
-      <span id="current-lyric"></span>
-      <span id="next-lyric"></span>
-    </div>
-    <div id="equalizer">
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-      <div class="bar"></div>
-    </div>
-    <div id="controls">
-      <button id="btn-prev">⏮</button>
-      <button id="btn-play-pause">⏸</button>
-      <button id="btn-next">⏭</button>
-    </div>
-    <div id="progress-bar">
-      <div id="progress-fill"></div>
+  <!-- 🎵 1. 기존 가사 바 모드 -->
+  <div id="bar-mode">
+    <div id="bar">
+      <img id="album-art" src="" alt="">
+      <div id="track-info">
+        <span id="title">곡을 재생해보세요</span>
+        <span id="artist"></span>
+      </div>
+      <div id="lyrics-container">
+        <span id="prev-lyric"></span>
+        <span id="current-lyric"></span>
+        <span id="next-lyric"></span>
+      </div>
+      <div id="equalizer">
+        <div class="bar"></div>
+        <div class="bar"></div>
+        <div class="bar"></div>
+        <div class="bar"></div>
+        <div class="bar"></div>
+        <div class="bar"></div>
+        <div class="bar"></div>
+        <div class="bar"></div>
+        <div class="bar"></div>
+        <div class="bar"></div>
+      </div>
+      <div id="controls">
+        <button id="btn-prev">⏮</button>
+        <button id="btn-play-pause">⏸</button>
+        <button id="btn-next">⏭</button>
+      </div>
+      <div id="progress-bar">
+        <div id="progress-fill"></div>
+      </div>
     </div>
   </div>
+
+  <!-- 💿 LP 위젯 모드  -->
+  <div id="lp-mode" style="display: none;">
+    <div class="lp-widget-bg">
+      <!-- 회전하는 LP판 -->
+      <div class="vinyl-record" id="vinyl-record">
+        <img id="lp-widget-cover" src="" alt="cover">
+        <div class="vinyl-hole"></div>
+      </div>
+      
+      <!-- 곡 정보 및 컨트롤러 -->
+      <div class="lp-footer">
+        <div class="lp-top-row">
+          <div class="lp-text-info">
+            <div id="lp-widget-artist">Artist</div>
+            <div id="lp-widget-title">Title</div>
+        </div>
+        <div class="lp-widget-controls">
+          <button id="lp-btn-prev">⏮</button>
+          <button id="lp-btn-play">⏯</button>
+          <button id="lp-btn-next">⏭</button>
+        </div>
+      </div>
+      <div id="lp-current-lyric" class="lp-lyric-text"></div>
+      <div class="lp-progress-container">
+        <div id="lp-progress-fill"></div>
+      </div>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 
