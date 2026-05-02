@@ -203,10 +203,8 @@ document.getElementById('lp-btn-next')?.addEventListener('click', async () => {
     setTimeout(syncWithServer, 500);
 });
 
-// --- 로컬 Progress 업데이트 루프 ---
-// --- 로컬 Progress 업데이트 루프 (진행 바 버그 수정본) ---
 function tickProgress() {
-    // 곡 정보가 없거나 재생 중이 아니면 계산 건너뜀
+    // 🚨 trackDuration이 없거나 0이면 실행하지 않음 (Infinity 방지)
     if (!isPlaying || lastSyncTime === null || !trackDuration || trackDuration <= 0) {
         requestAnimationFrame(tickProgress);
         return;
@@ -214,28 +212,25 @@ function tickProgress() {
 
     const now = performance.now();
     const elapsed = now - lastSyncTime;
-    
-    // 현재 진행 시간 계산 (전체 길이를 넘지 않도록 제한)
     const progress = Math.min(localProgress + elapsed, trackDuration);
     
-    // 퍼센트 계산 (0~100 사이로 안전하게 고정)
+    // 🚨 퍼센트 계산 시 안전장치 추가
     let percent = (progress / trackDuration) * 100;
-    if (isNaN(percent)) percent = 0;
+    if (isNaN(percent) || !isFinite(percent)) percent = 0;
     percent = Math.max(0, Math.min(100, percent));
 
-    // 1. 가사 바 모드 진행 바 업데이트
+    // 1. 바 모드 진행 바 업데이트
     const progressFill = document.getElementById('progress-fill');
     if (progressFill) {
         progressFill.style.width = `${percent}%`;
     }
 
-    // 2. LP 위젯 모드 진행 바 업데이트 (복구 완료)
+    // 2. LP 모드 진행 바 업데이트
     const lpProgressFill = document.getElementById('lp-progress-fill');
     if (lpProgressFill) {
         lpProgressFill.style.width = `${percent}%`;
     }
 
-    // 가사 싱크 업데이트 로직
     if (currentLyrics.length > 0) {
         const { prev, current, next, idx } = getLyricContext(progress + 500 + userSyncOffset);
         if (idx !== lastLyricIdx) {
@@ -255,11 +250,13 @@ ipcRenderer.on('change-style', (event, style) => {
     if (!barMode || !lpMode) return;
 
     if (style === 'lp') {
-        barMode.style.display = 'none';
-        lpMode.style.display = 'flex'; // block 대신 flex 적용!
+        // Bar 모드 비활성화, LP 모드 활성화
+        barMode.classList.remove('mode-active');
+        lpMode.classList.add('mode-active');
     } else {
-        barMode.style.display = 'flex';
-        lpMode.style.display = 'none';
+        // LP 모드 비활성화, Bar 모드 활성화
+        lpMode.classList.remove('mode-active');
+        barMode.classList.add('mode-active');
     }
 });
 
