@@ -232,7 +232,7 @@ function tickProgress() {
     }
 
     if (currentLyrics.length > 0) {
-        const { prev, current, next, idx } = getLyricContext(progress + 500 + userSyncOffset);
+        const { prev, current, next, idx } = getLyricContext(progress + 1000 + userSyncOffset);
         if (idx !== lastLyricIdx) {
             lastLyricIdx = idx;
             updateLyrics(prev, current, next);
