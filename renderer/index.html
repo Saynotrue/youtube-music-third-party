@@ -101,6 +101,14 @@
         <div id="license-error">유효하지 않은 키입니다</div>
       </div>
 
+      <div class="settings-section" id="service-selection-section">
+        <div class="settings-label">음악 서비스</div>
+        <div class="theme-pills service-pills">
+          <button class="theme-pill active" data-service="youtube">YouTube Music</button>
+          <button class="theme-pill" data-service="spotify">Spotify</button>
+        </div>
+      </div>
+
       <div class="s-divider"></div>
 
       <div id="opacity-section" class="settings-section">
@@ -120,12 +128,20 @@
       </div>
 
       <div class="settings-section">
-        <div class="settings-label">바 테마 <span class="pro-badge">PRO</span></div>
-        <div class="theme-pills">
-          <button class="theme-pill active" data-theme="auto">Auto</button>
-          <button class="theme-pill" data-theme="accent">강조</button>
-          <button class="theme-pill" data-theme="dark">단색</button>
-          <button class="theme-pill" data-theme="glass">글래스</button>
+        <div class="settings-label">위젯 스타일 <span class="pro-badge">PRO</span></div>
+        <div class="theme-pills widget-style-pills">
+          <!-- 🚨 data-widget="eq" 와 "lp" 가 반드시 있어야 합니다 -->
+          <button class="theme-pill" data-widget="eq">Bar</button>
+          <button class="theme-pill" data-widget="lp">LP</button>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-label">트레이 아이콘 <span class="pro-badge">PRO</span></div>
+        <div class="theme-pills tray-icon-pills">
+          <!-- 🚨 data-icon="player" 와 "spectrum" 이 반드시 있어야 합니다 -->
+          <button class="theme-pill" data-icon="player">Note</button>
+          <button class="theme-pill" data-icon="spectrum">Spectrum</button>
         </div>
       </div>
 

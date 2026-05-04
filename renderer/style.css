@@ -1,5 +1,8 @@
 :root {
     --theme-color: #FFFFFF;
+    --highlight-color: #1DB954;
+    --highlight-bg: rgba(29, 185, 84, 0.12);
+    --highlight-border: rgba(29, 185, 84, 0.35);
 }
 
 * {
@@ -33,7 +36,7 @@ body {
 }
 
 .mode-active {
-    opacity: 1 !important;
+    opacity: 1;
     visibility: visible !important;
     transform: translate(-50%, -50%) scale(1) !important;
     pointer-events: auto !important;
@@ -512,14 +515,14 @@ img {
 .brand-icon {
     width: 34px;
     height: 34px;
-    background: linear-gradient(135deg, #1DB954 0%, #0f7a38 100%);
+    background: linear-gradient(135deg, var(--highlight-color) 0%, #000 100%) !important;
+    box-shadow: 0 4px 14px var(--highlight-bg) !important;
     border-radius: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 17px;
     flex-shrink: 0;
-    box-shadow: 0 4px 14px rgba(29, 185, 84, 0.3);
 }
 
 .brand-info {
@@ -592,10 +595,20 @@ img {
 
 /* ─── 섹션 ────────────────────────────────────────────────── */
 .settings-section {
-    padding: 14px 0;
+    padding: 12px 0;
     display: flex;
     flex-direction: column;
     gap: 10px;
+}
+
+.settings-section:first-of-type {
+    padding-bottom: 4px !important;
+    margin-bottom: 0 !important;
+}
+
+#service-selection-section {
+    padding-top: 0 !important;
+    margin-top: -2px !important;
 }
 
 .settings-row-between {
@@ -605,18 +618,17 @@ img {
 }
 
 .settings-label {
+    margin-bottom: 2px !important;
+    /* 라벨 바로 아래 공백 축소 */
     color: rgba(255, 255, 255, 0.38);
     font-size: 10px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.8px;
-    display: flex;
-    align-items: center;
-    gap: 6px;
 }
 
 .pro-badge {
-    background: #1DB954;
+    background: var(--highlight-color) !important;
     color: #000;
     font-size: 8px;
     font-weight: 800;
@@ -685,18 +697,28 @@ img {
 }
 
 /* ─── 투명도 ──────────────────────────────────────────────── */
+
+body[data-service="youtube"] .value-chip {
+    color: #ff0033 !important;
+    background: rgba(255, 0, 0, 0.12) !important;
+}
+
+body[data-service="spotify"] .value-chip {
+    color: #1DB954 !important;
+    background: rgba(29, 185, 84, 0.12) !important;
+}
+
 .value-chip {
-    color: #1DB954;
     font-size: 11px;
     font-weight: 600;
-    background: rgba(29, 185, 84, 0.1);
     padding: 3px 9px;
     border-radius: 20px;
+    transition: all 0.3s ease;
 }
 
 #opacity-slider {
     width: 100%;
-    accent-color: #1DB954;
+    accent-color: var(--highlight-color) !important;
     cursor: pointer;
 }
 
@@ -768,7 +790,7 @@ img {
 }
 
 .toggle input:checked+.toggle-slider {
-    background: #1DB954;
+    background: var(--highlight-color) !important;
 }
 
 .toggle-slider:before {
@@ -826,9 +848,9 @@ img {
 }
 
 .theme-pill.active {
-    background: rgba(29, 185, 84, 0.12);
-    border-color: rgba(29, 185, 84, 0.35);
-    color: #1DB954;
+    background: var(--highlight-bg) !important;
+    border-color: var(--highlight-border) !important;
+    color: var(--highlight-color) !important;
     font-weight: 600;
 }
 
@@ -922,4 +944,44 @@ img {
 #upgrade-close:hover {
     background: rgba(255, 255, 255, 0.12);
     color: #fff;
+}
+
+body.settings-open #bar-mode,
+body.settings-open #lp-mode {
+    opacity: 0 !important;
+    visibility: hidden !important;
+    transform: translate(-50%, -50%) scale(0.95) !important;
+    /* 살짝 작아지며 사라지는 효과 */
+    pointer-events: none !important;
+}
+
+body[data-service="youtube"] {
+    --highlight-color: #ff0033;
+    --highlight-bg: rgba(255, 0, 0, 0.12);
+    --highlight-border: rgba(255, 0, 0, 0.35);
+}
+
+body[data-service="youtube"] .pro-badge {
+    color: #FFFFFF !important;
+}
+
+/* 🚨 YouTube 모드일 때 아이콘 안의 음표 색상을 하얀색으로 */
+body[data-service="youtube"] .brand-icon {
+    color: #FFFFFF !important;
+}
+
+/* 🚨 PRO Active 텍스트 색상을 하이라이트 컬러에 연동 */
+#license-status {
+    /* 기존 고정 색상 대신 변수 사용 또는 직접 지정 */
+    transition: color 0.3s ease;
+}
+
+body[data-service="youtube"] #license-status {
+    color: #FF0000 !important;
+    /* YouTube Red */
+}
+
+body[data-service="spotify"] #license-status {
+    color: #1DB954 !important;
+    /* Spotify Green */
 }

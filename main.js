@@ -6,6 +6,7 @@ let win;
 let tray = null;
 let currentIconStyle = 'player';
 let currentWidgetStyle = 'eq'; // 🚨 현재 위젯 모드 상태 저장
+let previousBounds = null;
 
 app.whenReady().then(() => {
     const { width, height } = screen.getPrimaryDisplay().workAreaSize;
@@ -104,59 +105,27 @@ app.whenReady().then(() => {
         return Menu.buildFromTemplate([
             {
                 label: '설정',
-                click: () => { win.show(); ipcMain.emit('open-settings'); },
-            },
-            { type: 'separator' },
-            {
-                label: isWindowVisible ? '숨기기' : '보이기 ',
-
-                accelerator: 'CommandOrControl+Shift+Space',
-
-                registerAccelerator: false,
-
                 click: () => {
-                    if (isWindowVisible) {
-                        win.hide();
-                    } else {
-                        win.show();
-                        win.focus();
-                    }
+                    if (!win.isVisible()) win.show();
+                    win.webContents.send('hide-widget-for-settings');
+                    setTimeout(() => {
+                        // 🚨 previousBounds 백업 로직 삭제! (더 이상 필요 없습니다)
+                        const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+                        win.setResizable(true);
+                        win.setBounds({ x: 0, y: 0, width: width, height: height });
+                        win.setResizable(false);
+                        win.webContents.send('open-settings');
+                    }, 300);
                 },
             },
             { type: 'separator' },
             {
-                label: '위젯 스타일',
-                submenu: [
-                    {
-                        label: '가사 바 (가로형)',
-                        type: 'radio',
-                        checked: currentWidgetStyle === 'eq', // 상태 연동
-                        click: () => setWindowMode('eq')
-                    },
-                    {
-                        label: 'LP 플레이어 (위젯형)',
-                        type: 'radio',
-                        checked: currentWidgetStyle === 'lp', // 상태 연동
-                        click: () => setWindowMode('lp')
-                    }
-                ]
-            },
-            {
-                label: '아이콘 스타일',
-                submenu: [
-                    {
-                        label: '음표 모양 (Player)',
-                        type: 'radio',
-                        checked: currentIconStyle === 'player',
-                        click: () => changeTrayIcon('player')
-                    },
-                    {
-                        label: '스펙트럼 모양 (Spectrum)',
-                        type: 'radio',
-                        checked: currentIconStyle === 'spectrum',
-                        click: () => changeTrayIcon('spectrum')
-                    }
-                ]
+                label: isWindowVisible ? '숨기기' : '보이기',
+                accelerator: 'CommandOrControl+Shift+Space',
+                registerAccelerator: false,
+                click: () => {
+                    isWindowVisible ? win.hide() : (win.show(), win.focus());
+                },
             },
             { type: 'separator' },
             {
@@ -182,13 +151,33 @@ app.whenReady().then(() => {
         }
     });
 
-    globalShortcut.register('CommandOrControl+Shift+Space', () => {
-        if (win.isVisible() && !win.isMinimized()) {
-            win.hide();
-        } else {
-            win.show();
-            win.focus();
+    ipcMain.on('update-system-settings', (event, settings) => {
+        if (win && !win.isDestroyed()) {
+            win.setAlwaysOnTop(settings.alwaysOnTop, 'screen-saver');
         }
+
+        if (settings.globalShortcut) {
+            if (!globalShortcut.isRegistered('CommandOrControl+Shift+Space')) {
+                globalShortcut.register('CommandOrControl+Shift+Space', () => {
+                    if (win.isVisible() && !win.isMinimized()) win.hide();
+                    else { win.show(); win.focus(); }
+                });
+            }
+        } else {
+            globalShortcut.unregister('CommandOrControl+Shift+Space');
+        }
+
+        // 아이콘은 설정 누르자마자 즉시 변경
+        changeTrayIcon(settings.trayIcon);
+
+        // 🚨 핵심: 위젯 스타일 상태만 저장해둠 (당장 창 크기를 바꾸면 모달이 잘려버림!)
+        currentWidgetStyle = settings.widgetStyle;
+    });
+
+    ipcMain.on('close-settings', () => {
+        setWindowMode(currentWidgetStyle);
+
+        win.webContents.send('show-widget-after-settings');
     });
 
     win.setResizable(false);
@@ -196,19 +185,6 @@ app.whenReady().then(() => {
 
 app.on('will-quit', () => {
     globalShortcut.unregisterAll();
-});
-
-ipcMain.on('open-settings', () => {
-    const { width, height } = screen.getPrimaryDisplay().workAreaSize;
-    win.setSize(700, 600);
-    win.setPosition(Math.floor((width - 700) / 2), height - 600 - 4);
-    win.webContents.send('open-settings');
-});
-
-ipcMain.on('close-settings', () => {
-    const { width, height } = screen.getPrimaryDisplay().workAreaSize;
-    win.setSize(700, 44);
-    win.setPosition(Math.floor((width - 700) / 2), height - 44 - 4);
 });
 
 // Mac 마이크 접근 권한 요청

@@ -41,7 +41,7 @@ function applyGradient(imgEl) {
 
     const lpMode = document.getElementById('lp-mode');
     if (lpMode) {
-        lpMode.style.background = 
+        lpMode.style.background =
             `linear-gradient(180deg, rgb(${color}) 0%, rgb(35, 35, 35) 75%, rgb(15, 15, 15) 100%)`;
     }
 
@@ -92,19 +92,17 @@ function updateLyrics(prev, current, next) {
     const lpCurrentEl = document.getElementById('lp-current-lyric');
 
     [prevEl, currentEl, nextEl, lpCurrentEl].forEach(el => {
-        if(el) el.style.opacity = '0';
+        if (el) el.style.opacity = '0';
     });
 
     setTimeout(() => {
-        if(prevEl) prevEl.textContent = prev;
-        if(currentEl) currentEl.textContent = current;
-        if(nextEl) nextEl.textContent = next;
-        if(lpCurrentEl) lpCurrentEl.textContent = current;
-        
-        if(lpCurrentEl) lpCurrentEl.textContent = current; 
+        if (prevEl) prevEl.textContent = prev;
+        if (currentEl) currentEl.textContent = current;
+        if (nextEl) nextEl.textContent = next;
+        if (lpCurrentEl) lpCurrentEl.textContent = current;
 
         requestAnimationFrame(() => {
-            if(container && currentEl && prevEl && nextEl) {
+            if (container && currentEl && prevEl && nextEl) {
                 const containerCenter = container.offsetWidth / 2;
                 const currentHalf = currentEl.offsetWidth / 2;
                 const gap = 32;
@@ -118,7 +116,7 @@ function updateLyrics(prev, current, next) {
         });
 
         [prevEl, currentEl, nextEl, lpCurrentEl].forEach(el => {
-            if(el) el.style.opacity = '1';
+            if (el) el.style.opacity = '1';
         });
     }, 200);
 }
@@ -204,7 +202,6 @@ document.getElementById('lp-btn-next')?.addEventListener('click', async () => {
 });
 
 function tickProgress() {
-    // 🚨 trackDuration이 없거나 0이면 실행하지 않음 (Infinity 방지)
     if (!isPlaying || lastSyncTime === null || !trackDuration || trackDuration <= 0) {
         requestAnimationFrame(tickProgress);
         return;
@@ -213,19 +210,16 @@ function tickProgress() {
     const now = performance.now();
     const elapsed = now - lastSyncTime;
     const progress = Math.min(localProgress + elapsed, trackDuration);
-    
-    // 🚨 퍼센트 계산 시 안전장치 추가
+
     let percent = (progress / trackDuration) * 100;
     if (isNaN(percent) || !isFinite(percent)) percent = 0;
     percent = Math.max(0, Math.min(100, percent));
 
-    // 1. 바 모드 진행 바 업데이트
     const progressFill = document.getElementById('progress-fill');
     if (progressFill) {
         progressFill.style.width = `${percent}%`;
     }
 
-    // 2. LP 모드 진행 바 업데이트
     const lpProgressFill = document.getElementById('lp-progress-fill');
     if (lpProgressFill) {
         lpProgressFill.style.width = `${percent}%`;
@@ -250,11 +244,9 @@ ipcRenderer.on('change-style', (event, style) => {
     if (!barMode || !lpMode) return;
 
     if (style === 'lp') {
-        // Bar 모드 비활성화, LP 모드 활성화
         barMode.classList.remove('mode-active');
         lpMode.classList.add('mode-active');
     } else {
-        // LP 모드 비활성화, Bar 모드 활성화
         lpMode.classList.remove('mode-active');
         barMode.classList.add('mode-active');
     }
@@ -269,9 +261,9 @@ async function syncWithServer() {
             isPlaying = false;
             lastSyncTime = null;
             stopEQ();
-            
+
             document.getElementById('btn-play-pause').textContent = '▶';
-            
+
             const lpPlayBtn = document.getElementById('lp-btn-play');
             if (lpPlayBtn) lpPlayBtn.textContent = '▶';
             document.getElementById('vinyl-record')?.classList.remove('playing');
@@ -280,15 +272,15 @@ async function syncWithServer() {
                 isPausedDisplayed = true;
                 updateLyrics('', '⏸', '');
             }
-            return; 
+            return;
         }
 
         document.getElementById('btn-play-pause').textContent = '⏸';
-        
+
         const lpPlayBtn = document.getElementById('lp-btn-play');
         if (lpPlayBtn) lpPlayBtn.textContent = '⏸';
         document.getElementById('vinyl-record')?.classList.add('playing');
-        
+
         isPausedDisplayed = false;
 
         const isSongChanged = track.title !== lastTitle;
@@ -311,12 +303,11 @@ async function syncWithServer() {
                 lastArtist = track.artist;
                 lastLyricIdx = -1;
                 currentLyrics = [];
-                if (typeof userSyncOffset !== 'undefined') userSyncOffset = 0;
 
                 const trackInfo = document.getElementById('track-info');
                 const lyricsContainer = document.getElementById('lyrics-container');
-                const lpTextInfo = document.querySelector('.lp-text-info'); 
-                const lpCover = document.getElementById('lp-widget-cover'); 
+                const lpTextInfo = document.querySelector('.lp-text-info');
+                const lpCover = document.getElementById('lp-widget-cover');
 
                 if (trackInfo && lyricsContainer) {
                     trackInfo.classList.add('fade');
@@ -328,11 +319,11 @@ async function syncWithServer() {
 
                 document.getElementById('title').textContent = track.title;
                 document.getElementById('artist').textContent = track.artist || 'Unknown Artist';
-                
+
                 const lpTitle = document.getElementById('lp-widget-title');
                 const lpArtist = document.getElementById('lp-widget-artist');
-                if(lpTitle) lpTitle.textContent = track.title;
-                if(lpArtist) lpArtist.textContent = track.artist || 'Unknown Artist';
+                if (lpTitle) lpTitle.textContent = track.title;
+                if (lpArtist) lpArtist.textContent = track.artist || 'Unknown Artist';
 
                 if (lpCover && track.albumArt && lpCover.src !== track.albumArt) {
                     const newImg = new Image();
@@ -346,23 +337,23 @@ async function syncWithServer() {
                         tempImg.style.borderRadius = '50%';
                         tempImg.style.objectFit = 'cover';
                         tempImg.style.transition = 'opacity 0.6s ease';
-                        
+
                         tempImg.style.top = '50%';
                         tempImg.style.left = '50%';
                         tempImg.style.transform = 'translate(-50%, -50%)';
-                        tempImg.style.zIndex = '2'; 
-                        
+                        tempImg.style.zIndex = '2';
+
                         const hole = document.querySelector('.vinyl-hole');
                         if (hole) hole.style.zIndex = '3';
 
                         lpCover.parentNode.appendChild(tempImg);
-                        
+
                         lpCover.src = track.albumArt;
-                        
-                        tempImg.offsetHeight; 
-                        
+
+                        tempImg.offsetHeight;
+
                         tempImg.style.opacity = '0';
-                        
+
                         setTimeout(() => {
                             if (tempImg.parentNode) tempImg.parentNode.removeChild(tempImg);
                         }, 600);
@@ -406,12 +397,12 @@ async function syncWithServer() {
     }
 }
 
-// --- 이퀄라이저 (WebSocket 기반) ---
+// --- 이퀄라이저 ---
 let visualizerMode = 'BARS';
 let wsClient = null;
 
 const eqEl = document.getElementById('equalizer');
-if(eqEl) {
+if (eqEl) {
     eqEl.addEventListener('click', () => {
         visualizerMode = visualizerMode === 'BARS' ? 'WAVE' : 'BARS';
     });
@@ -437,7 +428,7 @@ function startEQ() {
                 const dataArray = msg.data;
 
                 const eqContainer = document.getElementById('equalizer');
-                if(eqContainer) eqContainer.style.alignItems = 'center';
+                if (eqContainer) eqContainer.style.alignItems = 'center';
 
                 bars.forEach((bar, index) => {
                     let rawValue = (dataArray[index] || 0) * 0.5;
@@ -489,12 +480,12 @@ function startEQ() {
 
 function stopEQ() {
     if (wsClient) {
-        wsClient.onmessage = null; 
+        wsClient.onmessage = null;
         wsClient.onerror = null;
         wsClient.close();
-        wsClient = null; 
+        wsClient = null;
     }
-    
+
     document.querySelectorAll('#equalizer .bar').forEach(bar => {
         bar.style.height = '3px';
         bar.style.transform = 'translateY(0)';
@@ -502,18 +493,230 @@ function stopEQ() {
     });
 }
 
-// --- 가사 싱크 커스텀 (단축키) ---
-document.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowRight') {
-        userSyncOffset += 100;
-        showSyncMessage(`싱크 +${userSyncOffset}ms`);
-    } else if (e.key === 'ArrowLeft') {
-        userSyncOffset -= 100;
-        showSyncMessage(`싱크 ${userSyncOffset}ms`);
+// --- ⚙️ 설정 모달 및 기능 제어 ---
+
+// 1. 기본 설정값 및 상태 관리[cite: 2]
+let appConfig = {
+    isPro: false,
+    opacity: 1.0,
+    autoFade: false,
+    theme: 'auto',
+    syncOffset: 0,
+    alwaysOnTop: true,
+    globalShortcut: true,
+    widgetStyle: 'eq',
+    trayIcon: 'player',
+    musicService: 'youtube'
+};
+
+// 2. 초기화: 저장된 설정 불러오기[cite: 2]
+function initSettings() {
+    const saved = localStorage.getItem('lyricsBarSettings');
+    if (saved) {
+        appConfig = { ...appConfig, ...JSON.parse(saved) };
+    }
+    applyConfigToUI();
+    applyConfigToApp();
+}
+
+// 3. 설정 저장 및 적용[cite: 2]
+function saveSettings() {
+    localStorage.setItem('lyricsBarSettings', JSON.stringify(appConfig));
+    applyConfigToApp();
+}
+
+// 4. UI에 설정값 반영[cite: 2]
+function applyConfigToUI() {
+    const allSections = document.querySelectorAll('.settings-section');
+    if (allSections.length < 3) return; // 섹션 로드 대기[cite: 2]
+
+    const licenseSection = allSections[0];
+    // 인덱스 수정: 라이센스(0), 음악서비스(1) 이후 섹션들이 PRO 기능[cite: 2]
+    const proSections = Array.from(allSections).slice(2);
+
+    if (appConfig.isPro) {
+        const statusEl = document.getElementById('license-status');
+        statusEl.textContent = 'PRO Active';
+
+        // 🚨 기존에 '#1DB954'로 고정되어 있던 코드를 아래와 같이 변경합니다.
+        if (appConfig.musicService === 'youtube') {
+            statusEl.style.color = '#FF0000'; // YouTube Red
+        } else {
+            statusEl.style.color = '#1DB954'; // Spotify Green
+        }
+
+        document.getElementById('license-reset').style.display = 'block';
+        if (licenseSection) licenseSection.style.display = 'none';
+        proSections.forEach(sec => sec.classList.remove('section-disabled'));
+    } else {
+        document.getElementById('license-status').textContent = 'Free';
+        document.getElementById('license-status').style.color = 'rgba(255,255,255,0.38)';
+        document.getElementById('license-reset').style.display = 'none';
+
+        if (licenseSection) licenseSection.style.display = 'block';
+
+        proSections.forEach(sec => sec.classList.add('section-disabled'));
+    }
+
+    // 음악 서비스 선택 상태 업데이트[cite: 2]
+    document.querySelectorAll('.service-pills .theme-pill').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.service === appConfig.musicService);
+    });
+
+    // 기존 슬라이더 및 토글 요소 업데이트[cite: 2]
+    const opacitySlider = document.getElementById('opacity-slider');
+    if (opacitySlider) {
+        opacitySlider.value = appConfig.opacity;
+        document.getElementById('opacity-value').textContent = Math.round(appConfig.opacity * 100) + '%';
+    }
+
+    document.getElementById('auto-fade-toggle').checked = appConfig.autoFade;
+    document.getElementById('always-on-top-toggle').checked = appConfig.alwaysOnTop;
+    document.getElementById('shortcuts-toggle').checked = appConfig.globalShortcut;
+
+    const displayOffset = appConfig.syncOffset > 0 ? '+' + appConfig.syncOffset : appConfig.syncOffset;
+    document.getElementById('offset-display').textContent = displayOffset + 'ms';
+
+    document.querySelectorAll('.theme-pill[data-theme]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.theme === appConfig.theme);
+    });
+
+    document.querySelectorAll('.widget-style-pills .theme-pill').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.widget === appConfig.widgetStyle);
+    });
+
+    document.querySelectorAll('.tray-icon-pills .theme-pill').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.icon === appConfig.trayIcon);
+    });
+}
+
+// 5. 실제 앱 동작에 설정값 적용[cite: 2]
+function applyConfigToApp() {
+    const barMode = document.getElementById('bar-mode');
+    const lpMode = document.getElementById('lp-mode');
+    if (barMode) barMode.style.opacity = appConfig.opacity;
+    if (lpMode) lpMode.style.opacity = appConfig.opacity;
+
+    userSyncOffset = appConfig.syncOffset;
+    document.body.setAttribute('data-theme', appConfig.theme);
+    document.body.setAttribute('data-service', appConfig.musicService);
+
+    ipcRenderer.send('update-system-settings', {
+        alwaysOnTop: appConfig.alwaysOnTop,
+        globalShortcut: appConfig.globalShortcut,
+        widgetStyle: appConfig.widgetStyle,
+        trayIcon: appConfig.trayIcon
+    });
+}
+
+// --- 🖱️ 설정 모달 UI 이벤트 리스너 ---
+
+document.getElementById('license-activate')?.addEventListener('click', () => {
+    const key = document.getElementById('license-input').value.trim();
+    const errorEl = document.getElementById('license-error');
+    if (key.startsWith('PRO-')) {
+        appConfig.isPro = true;
+        if (errorEl) errorEl.style.opacity = '0';
+        saveSettings();
+        applyConfigToUI();
+    } else {
+        if (errorEl) {
+            errorEl.style.opacity = '1';
+            setTimeout(() => errorEl.style.opacity = '0', 3000);
+        }
     }
 });
 
-// 싱크 조정 알림 UI
+document.getElementById('license-reset')?.addEventListener('click', () => {
+    appConfig.isPro = false;
+    saveSettings();
+    applyConfigToUI();
+});
+
+document.querySelectorAll('.service-pills .theme-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+        if (!btn.dataset.service) return;
+        appConfig.musicService = btn.dataset.service;
+        saveSettings();
+        applyConfigToUI();
+    });
+});
+
+document.getElementById('opacity-slider')?.addEventListener('input', (e) => {
+    appConfig.opacity = parseFloat(e.target.value);
+    document.getElementById('opacity-value').textContent = Math.round(appConfig.opacity * 100) + '%';
+    applyConfigToApp();
+});
+document.getElementById('opacity-slider')?.addEventListener('change', saveSettings);
+
+document.getElementById('offset-minus')?.addEventListener('click', () => {
+    appConfig.syncOffset -= 100;
+    saveSettings();
+    applyConfigToUI();
+});
+document.getElementById('offset-plus')?.addEventListener('click', () => {
+    appConfig.syncOffset += 100;
+    saveSettings();
+    applyConfigToUI();
+});
+
+document.getElementById('auto-fade-toggle')?.addEventListener('change', (e) => {
+    appConfig.autoFade = e.target.checked;
+    saveSettings();
+});
+document.getElementById('always-on-top-toggle')?.addEventListener('change', (e) => {
+    appConfig.alwaysOnTop = e.target.checked;
+    saveSettings();
+});
+document.getElementById('shortcuts-toggle')?.addEventListener('change', (e) => {
+    appConfig.globalShortcut = e.target.checked;
+    saveSettings();
+});
+
+document.querySelectorAll('.theme-pill[data-theme]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+        const theme = e.currentTarget.dataset.theme;
+        if (theme) {
+            appConfig.theme = theme;
+            saveSettings();
+            applyConfigToUI();
+        }
+    });
+});
+
+document.querySelectorAll('.widget-style-pills .theme-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+        if (!btn.dataset.widget) return;
+        appConfig.widgetStyle = btn.dataset.widget;
+        saveSettings();
+        applyConfigToUI();
+    });
+});
+
+document.querySelectorAll('.tray-icon-pills .theme-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+        if (!btn.dataset.icon) return;
+        appConfig.trayIcon = btn.dataset.icon;
+        saveSettings();
+        applyConfigToUI();
+    });
+});
+
+// --- 가사 싱크 커스텀 (단축키 연동) ---
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight') {
+        appConfig.syncOffset += 100;
+        saveSettings();
+        applyConfigToUI();
+        showSyncMessage(`싱크 ${appConfig.syncOffset > 0 ? '+' : ''}${appConfig.syncOffset}ms`);
+    } else if (e.key === 'ArrowLeft') {
+        appConfig.syncOffset -= 100;
+        saveSettings();
+        applyConfigToUI();
+        showSyncMessage(`싱크 ${appConfig.syncOffset > 0 ? '+' : ''}${appConfig.syncOffset}ms`);
+    }
+});
+
 function showSyncMessage(msg) {
     let msgEl = document.getElementById('sync-msg');
     if (!msgEl) {
@@ -531,7 +734,42 @@ function showSyncMessage(msg) {
     }, 1500);
 }
 
+// --- 설정 모달 애니메이션 및 IPC 통신 ---
+
+ipcRenderer.on('hide-widget-for-settings', () => {
+    document.body.classList.add('settings-open');
+});
+
+ipcRenderer.on('open-settings', () => {
+    document.getElementById('settings-modal').classList.add('show');
+});
+
+document.getElementById('settings-close')?.addEventListener('click', closeSettingsModal);
+document.getElementById('settings-modal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'settings-modal') {
+        closeSettingsModal();
+    }
+});
+
+function closeSettingsModal() {
+    const modal = document.getElementById('settings-modal');
+    if (modal) modal.classList.add('closing');
+
+    setTimeout(() => {
+        if (modal) {
+            modal.classList.remove('show');
+            modal.classList.remove('closing');
+        }
+        ipcRenderer.send('close-settings');
+    }, 350);
+}
+
+ipcRenderer.on('show-widget-after-settings', () => {
+    document.body.classList.remove('settings-open');
+});
+
 // --- 초기화 및 실행 ---
-tickProgress();                          
-syncWithServer();                        
+initSettings();
+tickProgress();
+syncWithServer();
 setInterval(syncWithServer, 3000);
