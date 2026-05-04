@@ -987,3 +987,35 @@ body[data-service="spotify"] #license-status {
     color: #1DB954 !important;
     /* Spotify Green */
 }
+
+/* 활성화된 버튼 스타일 (테두리나 배경색 변경) */
+.service-pills .theme-pill.active {
+    border-color: var(--highlight-color) !important;
+    color: var(--highlight-color) !important;
+    background: var(--highlight-bg) !important;
+}
+
+.setting-pills {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.pill-btn {
+    flex: 1;
+    /* 🚨 버튼이 가로 공간을 똑같이 나눠 갖도록 설정 */
+    padding: 10px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #ccc;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s ease;
+}
+
+.pill-btn.active {
+    background: var(--highlight-bg) !important;
+    border-color: var(--highlight-color) !important;
+    color: var(--highlight-color) !important;
+}
