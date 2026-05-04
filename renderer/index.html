@@ -51,25 +51,124 @@
         <img id="lp-widget-cover" src="" alt="cover">
         <div class="vinyl-hole"></div>
       </div>
-      
+
       <!-- 곡 정보 및 컨트롤러 -->
       <div class="lp-footer">
         <div class="lp-top-row">
           <div class="lp-text-info">
             <div id="lp-widget-artist">Artist</div>
             <div id="lp-widget-title">Title</div>
+          </div>
+          <div class="lp-widget-controls">
+            <button id="lp-btn-prev">⏮</button>
+            <button id="lp-btn-play">⏯</button>
+            <button id="lp-btn-next">⏭</button>
+          </div>
         </div>
-        <div class="lp-widget-controls">
-          <button id="lp-btn-prev">⏮</button>
-          <button id="lp-btn-play">⏯</button>
-          <button id="lp-btn-next">⏭</button>
+        <div id="lp-current-lyric" class="lp-lyric-text"></div>
+        <div class="lp-progress-container">
+          <div id="lp-progress-fill"></div>
         </div>
       </div>
-      <div id="lp-current-lyric" class="lp-lyric-text"></div>
-      <div class="lp-progress-container">
-        <div id="lp-progress-fill"></div>
+    </div>
+  </div>
+  <!-- ⚙️ 3. 설정 모달 -->
+  <div id="settings-modal">
+    <div id="settings-panel">
+
+      <div id="settings-header">
+        <div class="header-brand">
+          <div class="brand-icon">♪</div>
+          <div class="brand-info">
+            <span class="brand-name">LyricsBar</span>
+            <div class="license-status-row">
+              <span id="license-status">Free</span>
+              <button id="license-reset">초기화</button>
+            </div>
+          </div>
+        </div>
+        <button id="settings-close">✕</button>
       </div>
+
+      <div class="s-divider"></div>
+
+      <div class="settings-section">
+        <div class="settings-label">라이센스 키</div>
+        <div class="settings-row">
+          <input id="license-input" type="text" placeholder="PRO-XXXX-XXXX-XXXX">
+          <button id="license-activate">적용</button>
+        </div>
+        <div id="license-error">유효하지 않은 키입니다</div>
       </div>
+
+      <div class="s-divider"></div>
+
+      <div id="opacity-section" class="settings-section">
+        <div class="settings-row-between">
+          <div class="settings-label">투명도 <span class="pro-badge">PRO</span></div>
+          <span class="value-chip" id="opacity-value">100%</span>
+        </div>
+        <input id="opacity-slider" type="range" min="0.3" max="1" step="0.05" value="1">
+      </div>
+
+      <div class="settings-section settings-row-between">
+        <div class="settings-label">자동 페이드 <span class="pro-badge">PRO</span></div>
+        <label class="toggle">
+          <input id="auto-fade-toggle" type="checkbox">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-label">바 테마 <span class="pro-badge">PRO</span></div>
+        <div class="theme-pills">
+          <button class="theme-pill active" data-theme="auto">Auto</button>
+          <button class="theme-pill" data-theme="accent">강조</button>
+          <button class="theme-pill" data-theme="dark">단색</button>
+          <button class="theme-pill" data-theme="glass">글래스</button>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-label">가사 싱크 조절 <span class="pro-badge">PRO</span></div>
+        <div class="stepper-row">
+          <button id="offset-minus" class="stepper-btn">−100ms</button>
+          <span id="offset-display">+600ms</span>
+          <button id="offset-plus" class="stepper-btn">+100ms</button>
+        </div>
+      </div>
+
+      <div class="s-divider"></div>
+
+      <div class="settings-section settings-row-between">
+        <div class="settings-label">항상 위에 표시 <span class="pro-badge">PRO</span></div>
+        <label class="toggle">
+          <input id="always-on-top-toggle" type="checkbox" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="settings-section settings-row-between">
+        <div class="shortcut-label-group">
+          <div class="settings-label">글로벌 단축키 <span class="pro-badge">PRO</span></div>
+          <div class="shortcut-hint">⌘ Shift Space — 바 보이기 / 숨기기</div>
+        </div>
+        <label class="toggle">
+          <input id="shortcuts-toggle" type="checkbox">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 🔒 4. 업그레이드 모달 -->
+  <div id="upgrade-modal">
+    <div id="upgrade-panel">
+      <div>🔒</div>
+      <div>Pro 전용 기능</div>
+      <p>이 기능은 Pro 버전에서 사용할 수 있어요</p>
+      <button id="upgrade-close">닫기</button>
     </div>
   </div>
 
