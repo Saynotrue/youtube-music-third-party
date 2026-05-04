@@ -4,8 +4,9 @@ require('./server.js');
 
 let win;
 let tray = null;
+let setupWindow = null; // 🚨 추가: Spotify 셋업 창 변수
 let currentIconStyle = 'player';
-let currentWidgetStyle = 'eq'; // 🚨 현재 위젯 모드 상태 저장
+let currentWidgetStyle = 'eq';
 let previousBounds = null;
 
 app.whenReady().then(() => {
@@ -43,7 +44,7 @@ app.whenReady().then(() => {
         }
     });
 
-    // --- 트레이 아이콘 경로 설정 ---
+    // --- 트레이 아이콘 설정 ---
     let trayIconPath;
     if (process.platform === 'win32') {
         trayIconPath = path.join(__dirname, 'tray', 'Windows', 'playerTemplate_white.png');
@@ -59,33 +60,25 @@ app.whenReady().then(() => {
     tray = new Tray(trayIcon);
     tray.setToolTip('YouTube Lyrics Bar');
 
-    // 아이콘 변경 함수
     function changeTrayIcon(style) {
         currentIconStyle = style;
         const iconName = style === 'player' ? 'playerTemplate' : 'spectrumTemplate';
-
         let newTrayIconPath;
         if (process.platform === 'win32') {
             newTrayIconPath = path.join(__dirname, 'tray', 'Windows', `${iconName}_white.png`);
         } else {
             newTrayIconPath = path.join(__dirname, 'tray', 'macOS', `${iconName}.png`);
         }
-
         const newTrayIcon = nativeImage.createFromPath(newTrayIconPath);
-        if (process.platform === 'darwin') {
-            newTrayIcon.setTemplateImage(true);
-        }
-
+        if (process.platform === 'darwin') newTrayIcon.setTemplateImage(true);
         tray.setImage(newTrayIcon);
     }
 
-    // --- 🚨 모드에 따라 창 크기와 위치 변경 ---
+    // --- 윈도우 모드 변경 함수 ---
     function setWindowMode(mode) {
-        currentWidgetStyle = mode; // 변경된 상태 저장
+        currentWidgetStyle = mode;
         const currentScreen = screen.getPrimaryDisplay().workAreaSize;
-
         win.setResizable(true);
-
         if (mode === 'eq') {
             win.setSize(700, 44);
             win.setPosition(Math.floor((currentScreen.width - 700) / 2), currentScreen.height - 44 - 4);
@@ -95,13 +88,37 @@ app.whenReady().then(() => {
             win.setPosition(Math.floor((currentScreen.width - 320) / 2), currentScreen.height - 320 - 20);
             if (win && !win.isDestroyed()) win.webContents.send('change-style', 'lp');
         }
-
         win.setResizable(false);
     }
 
+    // --- 🚨 Spotify API 셋업 창 생성 로직 추가 ---
+    ipcMain.on('open-setup-window', () => {
+        if (setupWindow) {
+            setupWindow.focus();
+            return;
+        }
+
+        setupWindow = new BrowserWindow({
+            width: 450,
+            height: 550,
+            resizable: false,
+            webPreferences: {
+                nodeIntegration: true,
+                contextIsolation: false
+            }
+        });
+
+        // 파일 구조(image_c47e9f.png)에 따른 정확한 경로 설정
+        const setupPath = path.join(__dirname, 'renderer', 'setup.html');
+        setupWindow.loadFile(setupPath);
+
+        setupWindow.on('closed', () => {
+            setupWindow = null;
+        });
+    });
+
     function getDynamicContextMenu() {
         const isWindowVisible = win.isVisible() && !win.isMinimized();
-
         return Menu.buildFromTemplate([
             {
                 label: '설정',
@@ -109,7 +126,6 @@ app.whenReady().then(() => {
                     if (!win.isVisible()) win.show();
                     win.webContents.send('hide-widget-for-settings');
                     setTimeout(() => {
-                        // 🚨 previousBounds 백업 로직 삭제! (더 이상 필요 없습니다)
                         const { width, height } = screen.getPrimaryDisplay().workAreaSize;
                         win.setResizable(true);
                         win.setBounds({ x: 0, y: 0, width: width, height: height });
@@ -142,20 +158,10 @@ app.whenReady().then(() => {
         tray.popUpContextMenu(getDynamicContextMenu());
     });
 
-    tray.on('right-click', () => {
-        if (win.isVisible() && !win.isMinimized()) {
-            win.hide();
-        } else {
-            win.show();
-            win.focus();
-        }
-    });
-
     ipcMain.on('update-system-settings', (event, settings) => {
         if (win && !win.isDestroyed()) {
             win.setAlwaysOnTop(settings.alwaysOnTop, 'screen-saver');
         }
-
         if (settings.globalShortcut) {
             if (!globalShortcut.isRegistered('CommandOrControl+Shift+Space')) {
                 globalShortcut.register('CommandOrControl+Shift+Space', () => {
@@ -166,17 +172,12 @@ app.whenReady().then(() => {
         } else {
             globalShortcut.unregister('CommandOrControl+Shift+Space');
         }
-
-        // 아이콘은 설정 누르자마자 즉시 변경
         changeTrayIcon(settings.trayIcon);
-
-        // 🚨 핵심: 위젯 스타일 상태만 저장해둠 (당장 창 크기를 바꾸면 모달이 잘려버림!)
         currentWidgetStyle = settings.widgetStyle;
     });
 
     ipcMain.on('close-settings', () => {
         setWindowMode(currentWidgetStyle);
-
         win.webContents.send('show-widget-after-settings');
     });
 
@@ -186,11 +187,5 @@ app.whenReady().then(() => {
 app.on('will-quit', () => {
     globalShortcut.unregisterAll();
 });
-
-// Mac 마이크 접근 권한 요청
-const { systemPreferences } = require('electron');
-if (process.platform === 'darwin') {
-    systemPreferences.askForMediaAccess('microphone');
-}
 
 app.on('window-all-closed', () => app.quit());

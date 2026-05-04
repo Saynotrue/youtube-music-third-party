@@ -633,14 +633,16 @@ document.getElementById('license-reset')?.addEventListener('click', () => {
     applyConfigToUI();
 });
 
-document.querySelectorAll('.service-pills .theme-pill').forEach(btn => {
-    btn.addEventListener('click', () => {
-        if (!btn.dataset.service) return;
-        appConfig.musicService = btn.dataset.service;
-        saveSettings();
-        applyConfigToUI();
-    });
-});
+function changeService(service) {
+    appConfig.musicService = service;
+    saveSettings();
+    applyConfigToUI();
+
+    // Spotify 선택 시 즉시 메인 프로세스에 신호 전송
+    if (service === 'spotify') {
+        ipcRenderer.send('open-setup-window');
+    }
+}
 
 document.getElementById('opacity-slider')?.addEventListener('input', (e) => {
     appConfig.opacity = parseFloat(e.target.value);
