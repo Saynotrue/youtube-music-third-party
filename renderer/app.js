@@ -525,71 +525,89 @@ function saveSettings() {
     applyConfigToApp();
 }
 
-// 4. UI에 설정값 반영[cite: 2]
 function applyConfigToUI() {
     const currentService = appConfig.musicService || 'youtube';
     document.body.setAttribute('data-service', currentService);
 
-    // 🚨 2. 플랫폼 버튼 하이라이트 (Active 클래스 관리)
+    // 1. 플랫폼 버튼 하이라이트 켜기/끄기
     document.querySelectorAll('.service-pills .theme-pill').forEach(btn => {
-        // onclick 속성 텍스트에 현재 서비스 이름이 포함되어 있는지 확인
-        if (btn.getAttribute('onclick').includes(currentService)) {
-            btn.classList.add('active'); // 테마색 불 켜기
-        } else {
-            btn.classList.remove('active'); // 불 끄기
-        }
+        btn.classList.toggle('active', btn.dataset.service === currentService);
     });
 
-    const allSections = document.querySelectorAll('.settings-section');
-    if (allSections.length < 3) return; // 섹션 로드 대기[cite: 2]
+    // 🚨 2. PRO 전용 구역 자동 판별 (가장 안전한 방식)
+    // 화면의 모든 설정 칸을 뒤져서 '.pro-badge' 태그가 있는 곳만 모읍니다.
+    const allSettings = document.querySelectorAll('.settings-section, .setting-item');
+    const proSections = Array.from(allSettings).filter(sec => sec.querySelector('.pro-badge'));
 
-    const licenseSection = allSections[0];
-    // 인덱스 수정: 라이센스(0), 음악서비스(1) 이후 섹션들이 PRO 기능[cite: 2]
-    const proSections = Array.from(allSections).slice(2);
+    const licenseSection = document.getElementById('license-section');
+    const statusEl = document.getElementById('license-status');
+    const resetBtn = document.getElementById('license-reset');
 
     if (appConfig.isPro) {
-        const statusEl = document.getElementById('license-status');
-        statusEl.textContent = 'PRO Active';
-
-        // 🚨 기존에 '#1DB954'로 고정되어 있던 코드를 아래와 같이 변경합니다.
-        if (appConfig.musicService === 'youtube') {
-            statusEl.style.color = '#FF0000'; // YouTube Red
-        } else {
-            statusEl.style.color = '#1DB954'; // Spotify Green
+        if (statusEl) {
+            statusEl.textContent = 'PRO Active';
+            statusEl.style.color = currentService === 'youtube' ? '#FF0000' : '#1DB954';
         }
+        if (resetBtn) resetBtn.style.display = 'block';
+        if (licenseSection) licenseSection.style.display = 'none'; // PRO면 라이센스 창 숨김
 
-        document.getElementById('license-reset').style.display = 'block';
-        if (licenseSection) licenseSection.style.display = 'none';
+        // PRO 전용 구역들 비활성화 해제
         proSections.forEach(sec => sec.classList.remove('section-disabled'));
     } else {
-        document.getElementById('license-status').textContent = 'Free';
-        document.getElementById('license-status').style.color = 'rgba(255,255,255,0.38)';
-        document.getElementById('license-reset').style.display = 'none';
+        if (statusEl) {
+            statusEl.textContent = 'Free';
+            statusEl.style.color = 'rgba(255,255,255,0.38)';
+        }
+        if (resetBtn) resetBtn.style.display = 'none';
+        if (licenseSection) licenseSection.style.display = 'block'; // Free면 라이센스 창 표시
 
-        if (licenseSection) licenseSection.style.display = 'block';
-
+        // PRO 전용 구역들 비활성화 (흐리게)
         proSections.forEach(sec => sec.classList.add('section-disabled'));
     }
 
-    // 음악 서비스 선택 상태 업데이트[cite: 2]
-    document.querySelectorAll('.service-pills .theme-pill').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.service === appConfig.musicService);
-    });
+    // 3. 자동 페이드 항목 비활성화 처리 (YouTube Music 일 때)
+    const autoFadeToggle = document.getElementById('auto-fade-toggle');
+    if (autoFadeToggle) {
+        const autoFadeSection = autoFadeToggle.closest('.settings-section, .setting-item');
 
-    // 기존 슬라이더 및 토글 요소 업데이트[cite: 2]
+        if (currentService === 'youtube') {
+            autoFadeToggle.disabled = true; // 스위치 잠금
+            if (autoFadeSection) {
+                autoFadeSection.style.opacity = '0.4'; // 흐리게
+                autoFadeSection.style.pointerEvents = 'none'; // 클릭 차단
+            }
+        } else {
+            autoFadeToggle.disabled = false; // 스위치 해제
+            if (autoFadeSection && appConfig.isPro) {
+                // PRO 상태일 때만 다시 활성화 (Free일 땐 비활성화 유지)
+                autoFadeSection.style.opacity = '1';
+                autoFadeSection.style.pointerEvents = 'auto';
+            }
+        }
+        autoFadeToggle.checked = appConfig.autoFade;
+    }
+
+    // 4. 기존 슬라이더 및 토글 요소 업데이트
     const opacitySlider = document.getElementById('opacity-slider');
     if (opacitySlider) {
         opacitySlider.value = appConfig.opacity;
-        document.getElementById('opacity-value').textContent = Math.round(appConfig.opacity * 100) + '%';
+        const opacityValueEl = document.getElementById('opacity-value');
+        if (opacityValueEl) opacityValueEl.textContent = Math.round(appConfig.opacity * 100) + '%';
     }
 
-    document.getElementById('auto-fade-toggle').checked = appConfig.autoFade;
-    document.getElementById('always-on-top-toggle').checked = appConfig.alwaysOnTop;
-    document.getElementById('shortcuts-toggle').checked = appConfig.globalShortcut;
+    const alwaysOnTopToggle = document.getElementById('always-on-top-toggle');
+    if (alwaysOnTopToggle) alwaysOnTopToggle.checked = appConfig.alwaysOnTop;
 
-    const displayOffset = appConfig.syncOffset > 0 ? '+' + appConfig.syncOffset : appConfig.syncOffset;
-    document.getElementById('offset-display').textContent = displayOffset + 'ms';
+    const shortcutsToggle = document.getElementById('shortcuts-toggle');
+    if (shortcutsToggle) shortcutsToggle.checked = appConfig.globalShortcut;
 
+    const offsetDisplay = document.getElementById('offset-display');
+    if (offsetDisplay) {
+        const displayOffset = appConfig.syncOffset > 0 ? '+' + appConfig.syncOffset : appConfig.syncOffset;
+        offsetDisplay.textContent = displayOffset + 'ms';
+    }
+
+    // 테마, 위젯 스타일, 트레이 아이콘 토글 업데이트
     document.querySelectorAll('.theme-pill[data-theme]').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.theme === appConfig.theme);
     });
@@ -649,7 +667,7 @@ document.getElementById('license-reset')?.addEventListener('click', () => {
 function changeService(service) {
     appConfig.musicService = service;
     saveSettings();
-    applyConfigToUI(); // 즉시 UI 업데이트
+    applyConfigToUI(); // 🚨 2. 클릭하자마자 UI 함수를 실행해서 하이라이트 즉시 변경
 
     if (service === 'spotify') {
         ipcRenderer.send('open-setup-window');

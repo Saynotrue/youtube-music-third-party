@@ -836,7 +836,7 @@ body[data-service="spotify"] .value-chip {
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 20px;
     color: rgba(255, 255, 255, 0.45);
-    padding: 6px 0;
+    padding: 6px 10px;
     cursor: pointer;
     font-size: 10px;
     font-weight: 500;
@@ -986,6 +986,25 @@ body[data-service="youtube"] #license-status {
 body[data-service="spotify"] #license-status {
     color: #1DB954 !important;
     /* Spotify Green */
+}
+
+.service-pills .theme-pill {
+    flex: 1;
+    padding: 6px 10px;
+    background: transparent;
+    /* 배경을 투명하게 해서 아래 버튼들과 통일 */
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #aaa;
+    border-radius: 50px;
+    cursor: pointer;
+    font-size: 10px;
+    transition: all 0.2s ease;
+}
+
+.service-pills {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
 }
 
 /* 활성화된 버튼 스타일 (테두리나 배경색 변경) */
