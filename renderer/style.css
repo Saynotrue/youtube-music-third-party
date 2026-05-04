@@ -618,6 +618,7 @@ img {
 }
 
 .settings-label {
+    padding-top: 10px;
     margin-bottom: 2px !important;
     /* 라벨 바로 아래 공백 축소 */
     color: rgba(255, 255, 255, 0.38);
@@ -641,6 +642,7 @@ img {
 .settings-row {
     display: flex;
     gap: 8px;
+    padding-bottom: -10px;
 }
 
 #license-input {

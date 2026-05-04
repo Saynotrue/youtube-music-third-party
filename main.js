@@ -4,7 +4,8 @@ require('./server.js');
 
 let win;
 let tray = null;
-let setupWindow = null; // 🚨 추가: Spotify 셋업 창 변수
+let setupWindow = null;
+let isAlwaysOnTopConfig = true;
 let currentIconStyle = 'player';
 let currentWidgetStyle = 'eq';
 let previousBounds = null;
@@ -102,6 +103,10 @@ app.whenReady().then(() => {
             width: 450,
             height: 550,
             resizable: false,
+            alwaysOnTop: true,
+            parent: win, // 메인 창을 부모로 설정하여 레이어 종속 관계 명시
+            modal: false, // 설정 창도 조작해야 하므로 완전 모달은 끔
+            backgroundColor: '#121212',
             webPreferences: {
                 nodeIntegration: true,
                 contextIsolation: false
@@ -124,6 +129,11 @@ app.whenReady().then(() => {
                 label: '설정',
                 click: () => {
                     if (!win.isVisible()) win.show();
+                    win.focus();
+
+                    win.setAlwaysOnTop(true, 'screen-saver');
+                    win.setAlwaysOnTop(false); // 바로 해제하여 다른 창에 가려질 수 있게 함
+
                     win.webContents.send('hide-widget-for-settings');
                     setTimeout(() => {
                         const { width, height } = screen.getPrimaryDisplay().workAreaSize;
@@ -159,6 +169,8 @@ app.whenReady().then(() => {
     });
 
     ipcMain.on('update-system-settings', (event, settings) => {
+        isAlwaysOnTopConfig = settings.alwaysOnTop; // 변수에만 저장
+
         if (win && !win.isDestroyed()) {
             win.setAlwaysOnTop(settings.alwaysOnTop, 'screen-saver');
         }
@@ -178,6 +190,9 @@ app.whenReady().then(() => {
 
     ipcMain.on('close-settings', () => {
         setWindowMode(currentWidgetStyle);
+        if (win && !win.isDestroyed()) {
+            win.setAlwaysOnTop(isAlwaysOnTopConfig, 'screen-saver');
+        }
         win.webContents.send('show-widget-after-settings');
     });
 

@@ -527,6 +527,19 @@ function saveSettings() {
 
 // 4. UI에 설정값 반영[cite: 2]
 function applyConfigToUI() {
+    const currentService = appConfig.musicService || 'youtube';
+    document.body.setAttribute('data-service', currentService);
+
+    // 🚨 2. 플랫폼 버튼 하이라이트 (Active 클래스 관리)
+    document.querySelectorAll('.service-pills .theme-pill').forEach(btn => {
+        // onclick 속성 텍스트에 현재 서비스 이름이 포함되어 있는지 확인
+        if (btn.getAttribute('onclick').includes(currentService)) {
+            btn.classList.add('active'); // 테마색 불 켜기
+        } else {
+            btn.classList.remove('active'); // 불 끄기
+        }
+    });
+
     const allSections = document.querySelectorAll('.settings-section');
     if (allSections.length < 3) return; // 섹션 로드 대기[cite: 2]
 
@@ -636,9 +649,8 @@ document.getElementById('license-reset')?.addEventListener('click', () => {
 function changeService(service) {
     appConfig.musicService = service;
     saveSettings();
-    applyConfigToUI();
+    applyConfigToUI(); // 즉시 UI 업데이트
 
-    // Spotify 선택 시 즉시 메인 프로세스에 신호 전송
     if (service === 'spotify') {
         ipcRenderer.send('open-setup-window');
     }
