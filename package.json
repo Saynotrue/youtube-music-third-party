@@ -1,7 +1,7 @@
 {
-  "name": "youtube-lyrics-bar",
+  "name": "music-lyrics-widget",
   "version": "1.0.0",
-  "description": "YouTube Music Lyrics Bar",
+  "description": "Music Lyrics Widget",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -24,8 +24,8 @@
     "electron-builder": "^26.8.1"
   },
   "build": {
-    "appId": "com.youtube-lyrics-bar.app",
-    "productName": "YouTube Lyrics Bar",
+    "appId": "com.music-lyrics-widget.app",
+    "productName": "Music Lyrics Widget",
     "directories": {
       "output": "dist"
     },
