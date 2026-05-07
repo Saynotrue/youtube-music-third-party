@@ -309,6 +309,7 @@ body {
     border-radius: 50%;
     object-fit: cover;
     z-index: 1;
+    transition: opacity 0.4s ease, transform 0.4s ease;
 }
 
 .vinyl-hole {
@@ -343,6 +344,7 @@ body {
     flex-direction: column;
     max-width: 65%;
     min-width: 0;
+    transition: opacity 0.4s ease, transform 0.4s ease;
 }
 
 #lp-widget-artist {
@@ -410,8 +412,10 @@ body {
 }
 
 .lp-text-info.fade,
-.lp-lyric-text.fade {
-    opacity: 0;
+.lp-lyric-text.fade,
+#lp-widget-cover.fade {
+    opacity: 0 !important;
+    transform: scale(0.92);
 }
 
 button:focus,

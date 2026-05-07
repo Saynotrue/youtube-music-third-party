@@ -248,10 +248,15 @@ async function syncWithServer() {
 
                 const trackInfo = document.getElementById('track-info');
                 const lyricsContainer = document.getElementById('lyrics-container');
+                const lpTextInfo = document.querySelector('.lp-text-info'); // 👈 LP 텍스트 영역 추가
+
+                // 🚨 1. 페이드 아웃 시작 (기존 Bar 모드와 함께 LP 모드도 페이드아웃)
                 if (trackInfo && lyricsContainer) { trackInfo.classList.add('fade'); lyricsContainer.classList.add('fade'); }
+                if (lpTextInfo) lpTextInfo.classList.add('fade');
 
                 await new Promise(r => setTimeout(r, 400));
 
+                // 🚨 2. 데이터 교체 (중복 제거 및 깔끔하게 정리)
                 document.getElementById('title').textContent = track.title;
                 document.getElementById('artist').textContent = track.artist || 'Unknown Artist';
 
@@ -260,7 +265,10 @@ async function syncWithServer() {
                 if (lpTitle) lpTitle.textContent = track.title;
                 if (lpArtist) lpArtist.textContent = track.artist || 'Unknown Artist';
 
+                // 🚨 3. 페이드 인 (Bar 모드와 LP 모드 모두 다시 나타나게 처리)
                 if (trackInfo && lyricsContainer) { trackInfo.classList.remove('fade'); lyricsContainer.classList.remove('fade'); }
+                if (lpTextInfo) lpTextInfo.classList.remove('fade'); // 👈 누락되었던 LP 텍스트 복구 코드 추가
+
                 fetchLyrics(track.title, track.artist, track.album);
             }
         } else {
@@ -273,15 +281,29 @@ async function syncWithServer() {
         trackDuration = track.duration;
 
         const albumArtEl = document.getElementById('album-art');
+        const lpCover = document.getElementById('lp-widget-cover');
+
+        // 🚨 앨범 아트 교체 시 페이드 효과 적용
         if (track.albumArt && albumArtEl && albumArtEl.src !== track.albumArt) {
-            albumArtEl.src = track.albumArt;
-            albumArtEl.onload = () => {
+
+            albumArtEl.classList.remove('visible'); // Bar 모드 투명화
+            if (lpCover) lpCover.classList.add('fade'); // LP 모드 투명화
+
+            // 새 이미지가 완전히 로드된 후에 화면에 띄우기 (깜빡임 방지)
+            const tempImg = new Image();
+            tempImg.src = track.albumArt;
+            tempImg.onload = () => {
+                // Bar 모드 이미지 적용
+                albumArtEl.src = track.albumArt;
                 albumArtEl.classList.add('visible');
                 applyGradient(albumArtEl);
-            };
 
-            const lpCover = document.getElementById('lp-widget-cover');
-            if (lpCover) lpCover.src = track.albumArt;
+                // LP 모드 이미지 적용 및 페이드 인
+                if (lpCover) {
+                    lpCover.src = track.albumArt;
+                    lpCover.classList.remove('fade');
+                }
+            };
         }
 
         if (appConfig.musicService === 'youtube') {
