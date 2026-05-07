@@ -1,12 +1,12 @@
 // ==UserScript==
-// @name         YouTube Music Ultimate Integration (Lyrics, Visualizer, Remote)
+// @name         YouTube Music Ultimate Integration (Ultra Light)
 // @namespace    http://tampermonkey.net/
-// @version      6.0
+// @version      7.0
 // @author       You
 // @match        https://music.youtube.com/*
-// @grant        GM_xmlhttpRequest
-// @connect      127.0.0.1
+// @grant        none
 // ==/UserScript==
+// 🚨 주의: @grant GM_xmlhttpRequest 를 지우고 @grant none 으로 변경했습니다. (성능 향상)
 
 (function () {
     'use strict';
@@ -20,7 +20,7 @@
     }
 
     // =====================================================================
-    // 1. 상태 및 가사 전송 (1초마다 가사 바에 현재 상태 알려주기)
+    // 1. 상태 및 가사 전송 (가벼운 fetch 로 교체 완료)
     // =====================================================================
     setInterval(() => {
         const video = document.querySelector('video.html5-main-video');
@@ -28,23 +28,18 @@
         const bylineEl = document.querySelector('ytmusic-player-bar .byline');
         const imgEl = document.querySelector('ytmusic-player-bar img');
         const activeLyric = document.querySelector('.ytmusic-player-page .active-lyric');
-
         const timeInfoEl = document.querySelector('.time-info.ytmusic-player-bar');
 
         if (!titleEl) return;
 
-        const bylineText = bylineEl ? bylineEl.textContent : '';
-        const parts = bylineText.split(' • ');
+        const parts = (bylineEl ? bylineEl.textContent : '').split(' • ');
         const artist = parts[0] || '';
         const album = parts[1] || '';
         const currentLyric = activeLyric ? activeLyric.textContent.trim() : "";
 
-        let progress = 0;
-        let duration = 0;
-
+        let progress = 0, duration = 0;
         if (timeInfoEl) {
-            const timeText = timeInfoEl.textContent;
-            const timeParts = timeText.split('/');
+            const timeParts = timeInfoEl.textContent.split('/');
             if (timeParts.length === 2) {
                 progress = parseTimeToMs(timeParts[0]);
                 duration = parseTimeToMs(timeParts[1]);
@@ -53,12 +48,8 @@
             progress = Math.floor(video.currentTime * 1000);
             duration = Math.floor(video.duration * 1000);
         }
-        let isPlaying = false;
-        if (navigator.mediaSession) {
-            isPlaying = navigator.mediaSession.playbackState === 'playing';
-        } else if (video) {
-            isPlaying = !video.paused;
-        }
+
+        let isPlaying = navigator.mediaSession ? (navigator.mediaSession.playbackState === 'playing') : (video && !video.paused);
 
         const state = {
             playing: isPlaying,
@@ -71,48 +62,34 @@
             lyric: currentLyric
         };
 
-        GM_xmlhttpRequest({
+        // 🚨 최적화: 무거운 GM_xmlhttpRequest 대신 브라우저 네이티브 fetch 사용
+        // 서버가 꺼져있을 때 에러 콘솔 도배를 막기 위해 .catch 처리
+        fetch("http://127.0.0.1:8888/update-state", {
             method: "POST",
-            url: "http://127.0.0.1:8888/update-state",
             headers: { "Content-Type": "application/json" },
-            data: JSON.stringify(state),
-            onerror: () => {}
-        });
+            body: JSON.stringify(state)
+        }).catch(() => { });
     }, 1000);
 
     // =====================================================================
     // 2. 실시간 명령 수신기
     // =====================================================================
     let evtSource = null;
-
     function connectSSE() {
         if (evtSource) evtSource.close();
         evtSource = new EventSource("http://127.0.0.1:8888/command-stream");
-
         evtSource.onmessage = function (event) {
             const command = event.data;
-            if (command === 'play-pause') {
-                const btn = document.querySelector('#play-pause-button');
-                if (btn) btn.click();
-            } else if (command === 'next') {
-                const btn = document.querySelector('.next-button');
-                if (btn) btn.click();
-            } else if (command === 'previous') {
-                const btn = document.querySelector('.previous-button');
-                if (btn) btn.click();
-            }
+            if (command === 'play-pause') document.querySelector('#play-pause-button')?.click();
+            else if (command === 'next') document.querySelector('.next-button')?.click();
+            else if (command === 'previous') document.querySelector('.previous-button')?.click();
         };
-
-        evtSource.onerror = function (err) {
-            evtSource.close();
-            setTimeout(connectSSE, 3000);
-        };
+        evtSource.onerror = () => { evtSource.close(); setTimeout(connectSSE, 3000); };
     }
-
     connectSSE();
 
     // =====================================================================
-    // 3. 오디오 분석 및 비주얼라이저 로직
+    // 3. 오디오 분석 및 비주얼라이저 로직 (메모리 누수 차단 완료)
     // =====================================================================
     let audioCtx = null;
     let analyser = null;
@@ -120,7 +97,7 @@
     let mediaSource = null;
     let audioSetupDone = false;
     let ws = null;
-    let eqInterval = null;
+    let animationFrameId = null;
 
     const connectWS = () => {
         if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
@@ -129,35 +106,58 @@
 
         ws.onopen = () => {
             const dataArray = new Uint8Array(analyser.frequencyBinCount);
-            if (eqInterval) clearInterval(eqInterval);
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
 
-            eqInterval = setInterval(() => {
-                const video = document.querySelector('video.html5-main-video');
-                if (video && video !== currentVideo) {
-                    if (mediaSource) mediaSource.disconnect();
-                    currentVideo = video;
-                    mediaSource = audioCtx.createMediaElementSource(currentVideo);
-                    mediaSource.connect(analyser);
+            let lastSendTime = 0;
+            const targetFPS = 30; // 30 프레임 제한
+            const frameInterval = 1000 / targetFPS;
+
+            function sendEqData(timestamp) {
+                const videoEl = document.querySelector('video.html5-main-video');
+
+                // 🚨 메모리 누수 방지: 비디오 소스가 바뀔 때만 한 번 재연결
+                if (videoEl && videoEl !== currentVideo) {
+                    if (mediaSource) {
+                        try { mediaSource.disconnect(); } catch (e) { } // 기존 연결 완벽히 해제
+                    }
+                    currentVideo = videoEl;
+                    try {
+                        mediaSource = audioCtx.createMediaElementSource(currentVideo);
+                        mediaSource.connect(analyser);
+                    } catch (e) {
+                        console.log("Audio API 연동 대기 중...");
+                    }
                 }
 
-                if (analyser && ws.readyState === WebSocket.OPEN) {
-                    analyser.getByteFrequencyData(dataArray);
-                    const eqData = [
-                        dataArray[1] || 0, dataArray[2] || 0, dataArray[3] || 0,
-                        dataArray[4] || 0, dataArray[6] || 0, dataArray[8] || 0,
-                        dataArray[12] || 0, dataArray[16] || 0, dataArray[20] || 0,
-                        dataArray[24] || 0
-                    ];
-                    ws.send(JSON.stringify({ type: 'eq_data', data: eqData }));
+                if (timestamp - lastSendTime >= frameInterval) {
+                    lastSendTime = timestamp;
+
+                    if (analyser && ws.readyState === WebSocket.OPEN && currentVideo && !currentVideo.paused) {
+                        analyser.getByteFrequencyData(dataArray);
+
+                        let hasAudio = false;
+                        for (let i = 0; i < 10; i++) { if (dataArray[i] > 0) hasAudio = true; }
+
+                        if (hasAudio) {
+                            const eqData = [
+                                dataArray[1] || 0, dataArray[2] || 0, dataArray[3] || 0,
+                                dataArray[4] || 0, dataArray[6] || 0, dataArray[8] || 0,
+                                dataArray[12] || 0, dataArray[16] || 0, dataArray[20] || 0,
+                                dataArray[24] || 0
+                            ];
+                            ws.send(JSON.stringify({ type: 'eq_data', data: eqData }));
+                        }
+                    }
                 }
-            }, 33);
+                animationFrameId = requestAnimationFrame(sendEqData);
+            }
+            animationFrameId = requestAnimationFrame(sendEqData);
         };
 
         ws.onclose = () => {
-            if (eqInterval) clearInterval(eqInterval);
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
             setTimeout(connectWS, 3000);
         };
-
         ws.onerror = () => ws.close();
     };
 
@@ -172,10 +172,11 @@
             audioSetupDone = true;
             connectWS();
         } catch (e) {
-            console.error("오디오 설정 중 오류 발생:", e);
+            console.error("오디오 설정 오류:", e);
         }
     };
 
+    // 화면 아무 곳이나 클릭하면 오디오 분석기 가동
     window.addEventListener('click', () => {
         if (!audioSetupDone) setupAudioAnalysis();
     }, { once: true });

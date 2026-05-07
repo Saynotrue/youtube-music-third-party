@@ -289,6 +289,7 @@ app.get('/lyrics', async (req, res) => {
 });
 
 // ─── 오디오 비주얼라이저 릴레이 (YouTube 전용 WebSocket) ──
+// ─── 오디오 비주얼라이저 릴레이 (YouTube 전용 WebSocket) ──
 const wss = new WebSocket.Server({ port: WS_PORT });
 
 wss.on('connection', (ws) => {
@@ -298,7 +299,11 @@ wss.on('connection', (ws) => {
             if (data.type === 'register_renderer') {
                 rendererSocket = ws;
             } else if (data.type === 'eq_data' && rendererSocket && rendererSocket.readyState === WebSocket.OPEN) {
-                rendererSocket.send(JSON.stringify(data));
+                // 🚨 핵심 최적화: 현재 서비스가 'youtube'일 때만 EQ 데이터를 일렉트론(app.js)으로 보냅니다.
+                // spotify 모드일 때는 백그라운드 템퍼몽키가 데이터를 보내도 여기서 컷트합니다.
+                if (currentService === 'youtube') {
+                    rendererSocket.send(JSON.stringify(data));
+                }
             }
         } catch (e) {
             console.error('WebSocket 파싱 오류:', e);
@@ -309,7 +314,6 @@ wss.on('connection', (ws) => {
         if (rendererSocket === ws) rendererSocket = null;
     });
 });
-
 // ─── 서버 구동 ───────────────────────────────────────────
 app.listen(PORT, '127.0.0.1', () => {
     console.log(`[HTTP] 통합 서버 실행 중: http://127.0.0.1:${PORT}`);

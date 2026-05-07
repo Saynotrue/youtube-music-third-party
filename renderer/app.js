@@ -7,6 +7,7 @@ let lastArtist = '';
 let isFetchingLyrics = false;
 let lastLyricIdx = -1;
 let isPausedDisplayed = false;
+let lastLyricCheckTime = 0;
 
 // 로컬 재생 상태 추적
 let localProgress = 0;
@@ -78,7 +79,7 @@ function applyGradient(imgEl) {
     const titleEl = document.getElementById('title');
     const artistEl = document.getElementById('artist');
 
-    // PRO 테마 분기[cite: 10]
+    // PRO 테마 분기
     if (appConfig.theme === 'dark') {
         if (bar) { bar.style.background = 'rgba(15, 15, 15, 0.95)'; bar.style.backdropFilter = ''; }
         if (lpMode) lpMode.style.background = 'rgba(15, 15, 15, 0.95)';
@@ -283,7 +284,11 @@ async function syncWithServer() {
             if (lpCover) lpCover.src = track.albumArt;
         }
 
-        startEQ();
+        if (appConfig.musicService === 'youtube') {
+            startEQ();
+        } else {
+            stopEQ();
+        }
 
     } catch (e) { console.error('동기화 실패:', e); }
 }
@@ -294,7 +299,8 @@ function tickProgress() {
         return;
     }
 
-    const progress = Math.min(localProgress + (performance.now() - lastSyncTime), trackDuration);
+    const now = performance.now();
+    const progress = Math.min(localProgress + (now - lastSyncTime), trackDuration);
     let percent = Math.max(0, Math.min(100, (progress / trackDuration) * 100));
     if (isNaN(percent) || !isFinite(percent)) percent = 0;
 
@@ -303,14 +309,16 @@ function tickProgress() {
     const lpProgressFill = document.getElementById('lp-progress-fill');
     if (lpProgressFill) lpProgressFill.style.width = `${percent}%`;
 
-    if (currentLyrics.length > 0) {
-        // userSyncOffset을 통해 가사 싱크 조절
+    // 🚨 최적화: 가사 갱신 체크는 100ms(0.1초)에 한 번만 실행하여 CPU 점유율 대폭 하락
+    if (currentLyrics.length > 0 && (now - lastLyricCheckTime > 100)) {
+        lastLyricCheckTime = now;
         const { prev, current, next, idx } = getLyricContext(progress + 1000 + appConfig.syncOffset);
         if (idx !== lastLyricIdx) {
             lastLyricIdx = idx;
             updateLyrics(prev, current, next);
         }
     }
+
     requestAnimationFrame(tickProgress);
 }
 
@@ -341,14 +349,13 @@ document.getElementById('lp-btn-prev')?.addEventListener('click', () => sendCont
 document.getElementById('btn-next')?.addEventListener('click', () => sendControlRequest('next'));
 document.getElementById('lp-btn-next')?.addEventListener('click', () => sendControlRequest('next'));
 
-// ─── 📉 이퀄라이저 (EQ) 로직 ──────────────────────────────
+// ─── 📉 이퀄라이저 (EQ) 로직 (🚨 최적화됨) ─────────────────
 let wsClient = null;
 let visualizerMode = 'BARS';
 
 document.getElementById('equalizer')?.addEventListener('click', () => {
     visualizerMode = visualizerMode === 'BARS' ? 'WAVE' : 'BARS';
 });
-
 function startEQ() {
     if (wsClient) return;
     try {
@@ -358,30 +365,63 @@ function startEQ() {
         const bars = document.querySelectorAll('#equalizer .bar');
         let smoothedValues = new Array(10).fill(0);
 
+        let latestEqData = null;
+        let isUpdating = false;
+
+        // 🚨 최적화: 현재 모드를 기억하여 스타일을 한 번만 적용
+        let currentRenderMode = '';
+
+        function renderVisualizer() {
+            if (!isPlaying || !latestEqData) {
+                isUpdating = false;
+                return;
+            }
+
+            // 모드가 바뀌었을 때만 height와 borderRadius를 변경하여 Reflow 방지
+            if (currentRenderMode !== visualizerMode) {
+                currentRenderMode = visualizerMode;
+                bars.forEach(bar => {
+                    if (visualizerMode === 'BARS') {
+                        bar.style.height = '16px';
+                        bar.style.borderRadius = '2px';
+                    } else {
+                        bar.style.height = '4px';
+                        bar.style.borderRadius = '50%';
+                    }
+                });
+            }
+
+            bars.forEach((bar, index) => {
+                let rawValue = (latestEqData[index] || 0) * 0.5;
+                smoothedValues[index] = rawValue < smoothedValues[index] ? rawValue : (smoothedValues[index] * 0.05) + (rawValue * 0.95);
+                smoothedValues[index] = Math.min(smoothedValues[index], 180);
+                let value = smoothedValues[index];
+
+                if (visualizerMode === 'BARS') {
+                    let baseScale = Math.max(0.2, (value / 255) * 1.75);
+                    let boostMultiplier = 1 + (index / (bars.length - 1)) * 1.5;
+                    if (index === 0) boostMultiplier *= 1.8;
+                    if (index === 1) boostMultiplier *= 1.6;
+                    // 🚨 최적화: 매 프레임 변하는 transform만 조작 (하드웨어 가속)
+                    bar.style.transform = `scaleY(${Math.min(baseScale * boostMultiplier, 1.8)})`;
+                } else {
+                    let totalVolume = smoothedValues.reduce((a, b) => a + b, 0);
+                    // 🚨 최적화: transform만 조작
+                    bar.style.transform = `scaleY(1) translateY(${Math.sin((Date.now() / 150) + index) * ((totalVolume / 10 / 25) + 2)}px)`;
+                }
+            });
+
+            isUpdating = false;
+        }
+
         wsClient.onmessage = (event) => {
             const msg = JSON.parse(event.data);
             if (msg.type === 'eq_data' && isPlaying) {
-                const dataArray = msg.data;
-                bars.forEach((bar, index) => {
-                    let rawValue = (dataArray[index] || 0) * 0.5;
-                    smoothedValues[index] = rawValue < smoothedValues[index] ? rawValue : (smoothedValues[index] * 0.05) + (rawValue * 0.95);
-                    smoothedValues[index] = Math.min(smoothedValues[index], 180);
-                    let value = smoothedValues[index];
-
-                    if (visualizerMode === 'BARS') {
-                        bar.style.height = '16px';
-                        let baseScale = Math.max(0.2, (value / 255) * 1.75);
-                        let boostMultiplier = 1 + (index / (bars.length - 1)) * 1.5;
-                        if (index === 0) boostMultiplier *= 1.8;
-                        if (index === 1) boostMultiplier *= 1.6;
-                        bar.style.transform = `scaleY(${Math.min(baseScale * boostMultiplier, 1.8)})`;
-                        bar.style.borderRadius = '2px';
-                    } else {
-                        let totalVolume = smoothedValues.reduce((a, b) => a + b, 0);
-                        bar.style.height = '4px'; bar.style.borderRadius = '50%';
-                        bar.style.transform = `scaleY(1) translateY(${Math.sin((Date.now() / 150) + index) * ((totalVolume / 10 / 25) + 2)}px)`;
-                    }
-                });
+                latestEqData = msg.data;
+                if (!isUpdating) {
+                    isUpdating = true;
+                    requestAnimationFrame(renderVisualizer);
+                }
             }
         };
         wsClient.onerror = () => stopEQ();
@@ -523,11 +563,17 @@ document.getElementById('license-reset')?.addEventListener('click', () => {
     saveSettings(); applyConfigToUI();
 });
 
-// 플랫폼 변경[cite:9]
+// 플랫폼 변경
 window.changeService = async function (service) {
     appConfig.musicService = service;
     saveSettings();
     applyConfigToUI();
+
+    if (service === 'spotify') {
+        stopEQ();
+    } else if (service === 'youtube') {
+        startEQ();
+    }
 
     // 서버에 플랫폼 변경 알림 및 상태 확인
     const res = await fetch('http://127.0.0.1:8888/set-service', {
