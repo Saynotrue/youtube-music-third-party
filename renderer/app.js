@@ -371,13 +371,15 @@ document.getElementById('lp-btn-prev')?.addEventListener('click', () => sendCont
 document.getElementById('btn-next')?.addEventListener('click', () => sendControlRequest('next'));
 document.getElementById('lp-btn-next')?.addEventListener('click', () => sendControlRequest('next'));
 
-// ─── 📉 이퀄라이저 (EQ) 로직 (🚨 최적화됨) ─────────────────
+// ─── 📉 이퀄라이저 (EQ) 로직 (관성/스프링 물리 적용) ─────────────────
 let wsClient = null;
 let visualizerMode = 'BARS';
+let eqAnimationFrameId = null; // 프레임 제어용
 
 document.getElementById('equalizer')?.addEventListener('click', () => {
     visualizerMode = visualizerMode === 'BARS' ? 'WAVE' : 'BARS';
 });
+
 function startEQ() {
     if (wsClient) return;
     try {
@@ -385,24 +387,32 @@ function startEQ() {
         wsClient.onopen = () => wsClient.send(JSON.stringify({ type: 'register_renderer' }));
 
         const bars = document.querySelectorAll('#equalizer .bar');
-        let smoothedValues = new Array(10).fill(0);
 
-        let latestEqData = null;
-        let isUpdating = false;
+        // 🚨 스프링 물리를 위한 위치(value)와 속도(velocity) 배열
+        let currentValues = new Array(10).fill(0);
+        let velocities = new Array(10).fill(0);
 
-        // 🚨 최적화: 현재 모드를 기억하여 스타일을 한 번만 적용
+        let latestEqData = new Array(10).fill(0);
         let currentRenderMode = '';
 
+        // 🧲 다이내믹 아일랜드 느낌의 물리 상수
+        const STIFFNESS = 0.25; // 탄성 (숫자가 높을수록 목표치로 팽팽하게 당김)
+        const DAMPING = 0.65;   // 감쇠 (숫자가 낮을수록 더 많이 통통 튕김)
+
         function renderVisualizer() {
-            if (!isPlaying || !latestEqData) {
-                isUpdating = false;
-                return;
+            // 정지 상태면 목표값을 0으로 서서히 가라앉게 함
+            if (!isPlaying) {
+                latestEqData = new Array(10).fill(0);
             }
 
-            // 모드가 바뀌었을 때만 height와 borderRadius를 변경하여 Reflow 방지
+            let isAnimating = false;
+
+            // 모드가 바뀌었을 때만 스타일을 덮어씌움 (Reflow 최소화)
             if (currentRenderMode !== visualizerMode) {
                 currentRenderMode = visualizerMode;
                 bars.forEach(bar => {
+                    // 🚨 핵심: JS에서 초당 60프레임으로 크기를 바꾸기 때문에 CSS transform transition을 해제해야 충돌(버벅임)이 사라집니다.
+                    bar.style.transition = 'background 0.5s ease, box-shadow 0.5s ease';
                     if (visualizerMode === 'BARS') {
                         bar.style.height = '16px';
                         bar.style.borderRadius = '2px';
@@ -414,46 +424,71 @@ function startEQ() {
             }
 
             bars.forEach((bar, index) => {
-                let rawValue = (latestEqData[index] || 0) * 0.5;
-                smoothedValues[index] = rawValue < smoothedValues[index] ? rawValue : (smoothedValues[index] * 0.05) + (rawValue * 0.95);
-                smoothedValues[index] = Math.min(smoothedValues[index], 180);
-                let value = smoothedValues[index];
+                let targetValue = (latestEqData[index] || 0) * 0.5;
+
+                // 📐 관성 & 스프링 물리 연산 코어
+                let diff = targetValue - currentValues[index];
+                velocities[index] += diff * STIFFNESS;
+                velocities[index] *= DAMPING;
+                currentValues[index] += velocities[index];
+
+                // 스프링이 완전히 멈췄는지 판단 (최적화)
+                if (Math.abs(velocities[index]) < 0.1 && Math.abs(diff) < 0.1) {
+                    velocities[index] = 0;
+                    currentValues[index] = targetValue;
+                } else {
+                    isAnimating = true; // 아직 튕기고 있음
+                }
+
+                // 렌더링 값 제한 (0 미만으로 떨어져 UI가 망가지는 것 방지)
+                let value = Math.max(0, Math.min(currentValues[index], 180));
 
                 if (visualizerMode === 'BARS') {
                     let baseScale = Math.max(0.2, (value / 255) * 1.75);
                     let boostMultiplier = 1 + (index / (bars.length - 1)) * 1.5;
                     if (index === 0) boostMultiplier *= 1.8;
                     if (index === 1) boostMultiplier *= 1.6;
-                    // 🚨 최적화: 매 프레임 변하는 transform만 조작 (하드웨어 가속)
+
                     bar.style.transform = `scaleY(${Math.min(baseScale * boostMultiplier, 1.8)})`;
                 } else {
-                    let totalVolume = smoothedValues.reduce((a, b) => a + b, 0);
-                    // 🚨 최적화: transform만 조작
+                    let totalVolume = currentValues.reduce((a, b) => a + b, 0);
                     bar.style.transform = `scaleY(1) translateY(${Math.sin((Date.now() / 150) + index) * ((totalVolume / 10 / 25) + 2)}px)`;
                 }
             });
 
-            isUpdating = false;
+            // 재생 중이거나 아직 스프링 애니메이션의 여음이 남아있다면 루프 계속 진행
+            if (isPlaying || isAnimating) {
+                eqAnimationFrameId = requestAnimationFrame(renderVisualizer);
+            } else {
+                eqAnimationFrameId = null;
+            }
         }
 
         wsClient.onmessage = (event) => {
             const msg = JSON.parse(event.data);
-            if (msg.type === 'eq_data' && isPlaying) {
+            if (msg.type === 'eq_data') {
                 latestEqData = msg.data;
-                if (!isUpdating) {
-                    isUpdating = true;
-                    requestAnimationFrame(renderVisualizer);
+                // 루프가 꺼져있는데 데이터가 들어왔다면 엔진 재가동
+                if (!eqAnimationFrameId) {
+                    eqAnimationFrameId = requestAnimationFrame(renderVisualizer);
                 }
             }
         };
+
         wsClient.onerror = () => stopEQ();
+        wsClient.onclose = () => stopEQ();
+
     } catch (e) { stopEQ(); }
 }
 
 function stopEQ() {
     if (wsClient) { wsClient.close(); wsClient = null; }
+    if (eqAnimationFrameId) { cancelAnimationFrame(eqAnimationFrameId); eqAnimationFrameId = null; }
+
     document.querySelectorAll('#equalizer .bar').forEach(bar => {
-        bar.style.height = '3px'; bar.style.transform = 'translateY(0)';
+        bar.style.transition = 'height 0.12s ease, transform 0.12s ease, background 0.5s ease';
+        bar.style.height = '3px';
+        bar.style.transform = 'translateY(0) scaleY(1)';
     });
 }
 
