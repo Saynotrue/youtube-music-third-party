@@ -239,6 +239,21 @@ app.whenReady().then(() => {
     win.setResizable(false);
 });
 
+ipcMain.on('toggle-fullscreen', (event, isFullscreen) => {
+    const win = require('electron').BrowserWindow.getFocusedWindow();
+    if (!win) return;
+
+    if (isFullscreen) {
+        // 전체화면 켜기 (모니터 꽉 채움)
+        win.setFullScreen(true);
+        win.setAlwaysOnTop(false); // 전체화면일 땐 항상 위 옵션 해제 (선택사항)
+    } else {
+        // 전체화면 끄기 (원래 위젯 크기로 복귀)
+        win.setFullScreen(false);
+        // win.setSize(800, 100); // 원래 위젯 사이즈가 있다면 지정해주세요
+    }
+});
+
 // ─── 앱 종료 관리 ─────────────────────────────────────────
 app.on('will-quit', () => {
     globalShortcut.unregisterAll();

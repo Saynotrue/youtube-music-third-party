@@ -1,6 +1,8 @@
 const { ipcRenderer } = require('electron');
 
-// ─── 전역 상태 및 변수 ───────────────────────────────────
+// ═════════════════════════════════════════════════════════════
+//  1. 전역 상태 및 변수 관리
+// ═════════════════════════════════════════════════════════════
 let currentLyrics = [];
 let lastTitle = '';
 let lastArtist = '';
@@ -19,13 +21,15 @@ let trackDuration = 0;
 let fadeTimer = null;
 let lastAlbumImg = null;
 
-// ─── ⚙️ 앱 설정 (Config) 초기화 및 관리 ──────────────────
+// ═════════════════════════════════════════════════════════════
+//  2. 앱 설정 (Config) 초기화 및 관리
+// ═════════════════════════════════════════════════════════════
 let appConfig = {
     isPro: false,
     opacity: 1.0,
     autoFade: false,
     theme: 'auto',
-    syncOffset: 0, // 기본 0ms
+    syncOffset: 0,
     alwaysOnTop: true,
     globalShortcut: true,
     widgetStyle: 'eq',
@@ -35,10 +39,8 @@ let appConfig = {
 
 function initSettings() {
     const saved = localStorage.getItem('lyricsBarSettings');
-    if (saved) {
-        appConfig = { ...appConfig, ...JSON.parse(saved) };
-    }
-    // 서버에 초기 서비스 상태 알림
+    if (saved) appConfig = { ...appConfig, ...JSON.parse(saved) };
+
     fetch('http://127.0.0.1:8888/set-service', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -54,7 +56,9 @@ function saveSettings() {
     applyConfigToApp();
 }
 
-// ─── 🎨 색상 추출 및 테마 (Gradient) 적용 ────────────────
+// ═════════════════════════════════════════════════════════════
+//  3. 🎨 테마 및 색상 추출 (배경 그라데이션 적용)
+// ═════════════════════════════════════════════════════════════
 function extractColor(imgEl) {
     const canvas = document.createElement('canvas');
     canvas.width = 10; canvas.height = 10;
@@ -62,9 +66,7 @@ function extractColor(imgEl) {
     ctx.drawImage(imgEl, 0, 0, 10, 10);
     const data = ctx.getImageData(0, 0, 10, 10).data;
     let r = 0, g = 0, b = 0;
-    for (let i = 0; i < data.length; i += 4) {
-        r += data[i]; g += data[i + 1]; b += data[i + 2];
-    }
+    for (let i = 0; i < data.length; i += 4) { r += data[i]; g += data[i + 1]; b += data[i + 2]; }
     const count = data.length / 4;
     return `${Math.floor(r / count)}, ${Math.floor(g / count)}, ${Math.floor(b / count)}`;
 }
@@ -79,7 +81,6 @@ function applyGradient(imgEl) {
     const titleEl = document.getElementById('title');
     const artistEl = document.getElementById('artist');
 
-    // PRO 테마 분기
     if (appConfig.theme === 'dark') {
         if (bar) { bar.style.background = 'rgba(15, 15, 15, 0.95)'; bar.style.backdropFilter = ''; }
         if (lpMode) lpMode.style.background = 'rgba(15, 15, 15, 0.95)';
@@ -95,7 +96,6 @@ function applyGradient(imgEl) {
         return;
     }
 
-    // Auto / Accent 테마 (색상 추출 필요)
     if (bar) bar.style.backdropFilter = '';
     const color = extractColor(img);
     const [r, g, b] = color.split(',').map(Number);
@@ -104,17 +104,21 @@ function applyGradient(imgEl) {
 
     if (appConfig.theme === 'accent') {
         if (bar) bar.style.background = `linear-gradient(90deg, rgba(${color}, 1.0) 0%, rgba(${color}, 0.85) 45%, rgba(${color}, 0.2) 100%)`;
-    } else { // 기본 Auto
+    } else {
         if (bar) bar.style.background = `linear-gradient(90deg, rgba(${color}, 0.9) 0%, rgba(${color}, 0.5) 25%, rgba(15,15,15,0.92) 55%)`;
         if (lpMode) lpMode.style.background = `linear-gradient(180deg, rgb(${color}) 0%, rgb(35, 35, 35) 75%, rgb(15, 15, 15) 100%)`;
     }
 
     if (titleEl) titleEl.style.color = isLight ? '#000' : '#fff';
     if (artistEl) artistEl.style.color = isLight ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.5)';
+
     document.documentElement.style.setProperty('--theme-color', `rgb(${color})`);
+    document.documentElement.style.setProperty('--bg-color', `rgb(${color})`);
 }
 
-// ─── 📝 가사(LRC) 파싱 및 렌더링 ─────────────────────────
+// ═════════════════════════════════════════════════════════════
+//  4. 📝 가사(LRC) 파싱 및 렌더링
+// ═════════════════════════════════════════════════════════════
 function parseLRC(lrc) {
     const timeRegex = /\[(\d{2}):(\d{2})\.(\d{2,3})\]/g;
     const result = [];
@@ -161,17 +165,27 @@ function updateLyrics(prev, current, next) {
         if (lpCurrentEl) lpCurrentEl.textContent = current;
 
         requestAnimationFrame(() => {
-            if (container && currentEl && prevEl && nextEl) {
-                const containerCenter = container.offsetWidth / 2;
-                const currentHalf = currentEl.offsetWidth / 2;
-                const gap = 32;
-                prevEl.style.left = (containerCenter - currentHalf - gap - prevEl.offsetWidth) + 'px';
-                nextEl.style.left = (containerCenter + currentHalf + gap) + 'px';
-            }
-        });
+            const isFull = document.body.classList.contains('fullscreen-mode');
 
-        [prevEl, currentEl, nextEl, lpCurrentEl].forEach(el => { if (el) el.style.opacity = '1'; });
-    }, 200);
+            if (!isFull) {
+                if (container && currentEl && prevEl && nextEl) {
+                    const containerCenter = container.offsetWidth / 2;
+                    const currentHalf = currentEl.offsetWidth / 2;
+                    const gap = 32;
+                    prevEl.style.left = (containerCenter - currentHalf - gap - prevEl.offsetWidth) + 'px';
+                    nextEl.style.left = (containerCenter + currentHalf + gap) + 'px';
+                }
+            } else {
+                if (prevEl) prevEl.style.left = '';
+                if (nextEl) nextEl.style.left = '';
+            }
+
+            if (prevEl) prevEl.style.opacity = isFull ? '' : '1';
+            if (currentEl) currentEl.style.opacity = isFull ? '' : '1';
+            if (nextEl) nextEl.style.opacity = isFull ? '' : '1';
+            if (lpCurrentEl) lpCurrentEl.style.opacity = '1';
+        });
+    }, 250);
 }
 
 async function fetchLyrics(title, artist, album, retryCount = 0) {
@@ -202,11 +216,63 @@ async function fetchLyrics(title, artist, album, retryCount = 0) {
     }
 }
 
-// ─── 🔄 서버 폴링 & 진행바 렌더링 ─────────────────────────
+// ═════════════════════════════════════════════════════════════
+//  5. 🖥️ 전체화면 토글 및 UI 겹침 방지 (높이 센서)
+// ═════════════════════════════════════════════════════════════
+let isFullscreen = false;
+const iconMaximize = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>`;
+const btnFullscreen = document.getElementById('btn-fullscreen');
+
+if (btnFullscreen) {
+    btnFullscreen.innerHTML = iconMaximize;
+    btnFullscreen.addEventListener('click', toggleFullscreen);
+}
+
+document.addEventListener('dblclick', (e) => {
+    if (e.target.closest('.controls, .setting-item, #lyrics-container, #track-info, #btn-fullscreen')) return;
+    toggleFullscreen();
+});
+
+function toggleFullscreen() {
+    isFullscreen = !isFullscreen;
+    if (isFullscreen) {
+        document.body.classList.add('fullscreen-mode');
+        ipcRenderer.send('toggle-fullscreen', true);
+    } else {
+        document.body.classList.remove('fullscreen-mode');
+        ipcRenderer.send('toggle-fullscreen', false);
+    }
+    lastLyricIdx = -1;
+}
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && isFullscreen) toggleFullscreen();
+});
+
+// 🚨 곡 정보 상자 높이 실시간 추적 (버튼 겹침 완벽 방지)
+function updateTrackHeight() {
+    const tiEl = document.getElementById('track-info');
+    if (tiEl) document.documentElement.style.setProperty('--ti-h', tiEl.offsetHeight + 'px');
+}
+
+const trackInfoObserver = new ResizeObserver(() => updateTrackHeight());
+setTimeout(() => {
+    const tiEl = document.getElementById('track-info');
+    if (tiEl) trackInfoObserver.observe(tiEl);
+    updateTrackHeight();
+}, 500);
+
+const bodyObserver = new MutationObserver(() => setTimeout(updateTrackHeight, 50));
+bodyObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+
+// ═════════════════════════════════════════════════════════════
+//  6. 🔄 서버 폴링 & 앨범 아트 추출 & 진행바
+// ═════════════════════════════════════════════════════════════
 async function syncWithServer() {
     try {
         const track = await fetch('http://127.0.0.1:8888/current-track').then(r => r.json());
 
+        // 1. 재생 상태 확인 및 이퀄라이저 제어
         if (!track.playing) {
             isPlaying = false;
             lastSyncTime = null;
@@ -223,6 +289,11 @@ async function syncWithServer() {
             return;
         }
 
+        // 🚨 이퀄라이저 생존 확인: 재생 중인데 꺼져있으면 다시 살림
+        if (appConfig.musicService === 'youtube' && !wsClient) {
+            startEQ();
+        }
+
         document.getElementById('btn-play-pause').textContent = '⏸';
         const lpPlayBtn = document.getElementById('lp-btn-play');
         if (lpPlayBtn) lpPlayBtn.textContent = '⏸';
@@ -232,7 +303,12 @@ async function syncWithServer() {
         const isSongChanged = track.title !== lastTitle;
         const isArtistChanged = track.artist !== lastArtist;
 
+        // 2. 곡 변경 처리 및 배경색 초기화
         if (track.title && track.title !== 'YouTube Music' && (isSongChanged || isArtistChanged)) {
+            // 🚨 배경색 즉시 어두운 회색으로 리셋 (하얀색 튐 방지)
+            document.documentElement.style.setProperty('--bg-color', '#1a1a1a');
+            document.documentElement.style.setProperty('--theme-color', '#ffffff');
+
             if (!isSongChanged && isArtistChanged && currentLyrics.length > 0) {
                 lastArtist = track.artist;
                 document.getElementById('artist').textContent = track.artist;
@@ -240,7 +316,6 @@ async function syncWithServer() {
                 if (lpArtist) lpArtist.textContent = track.artist;
             } else {
                 if (isSongChanged) localProgress = track.progress > 5000 ? 0 : track.progress;
-
                 lastTitle = track.title;
                 lastArtist = track.artist;
                 lastLyricIdx = -1;
@@ -248,26 +323,22 @@ async function syncWithServer() {
 
                 const trackInfo = document.getElementById('track-info');
                 const lyricsContainer = document.getElementById('lyrics-container');
-                const lpTextInfo = document.querySelector('.lp-text-info'); // 👈 LP 텍스트 영역 추가
+                const lpTextInfo = document.querySelector('.lp-text-info');
 
-                // 🚨 1. 페이드 아웃 시작 (기존 Bar 모드와 함께 LP 모드도 페이드아웃)
                 if (trackInfo && lyricsContainer) { trackInfo.classList.add('fade'); lyricsContainer.classList.add('fade'); }
                 if (lpTextInfo) lpTextInfo.classList.add('fade');
 
                 await new Promise(r => setTimeout(r, 400));
 
-                // 🚨 2. 데이터 교체 (중복 제거 및 깔끔하게 정리)
                 document.getElementById('title').textContent = track.title;
                 document.getElementById('artist').textContent = track.artist || 'Unknown Artist';
-
                 const lpTitle = document.getElementById('lp-widget-title');
                 const lpArtist = document.getElementById('lp-widget-artist');
                 if (lpTitle) lpTitle.textContent = track.title;
                 if (lpArtist) lpArtist.textContent = track.artist || 'Unknown Artist';
 
-                // 🚨 3. 페이드 인 (Bar 모드와 LP 모드 모두 다시 나타나게 처리)
                 if (trackInfo && lyricsContainer) { trackInfo.classList.remove('fade'); lyricsContainer.classList.remove('fade'); }
-                if (lpTextInfo) lpTextInfo.classList.remove('fade'); // 👈 누락되었던 LP 텍스트 복구 코드 추가
+                if (lpTextInfo) lpTextInfo.classList.remove('fade');
 
                 fetchLyrics(track.title, track.artist, track.album);
             }
@@ -280,47 +351,78 @@ async function syncWithServer() {
         isPlaying = true;
         trackDuration = track.duration;
 
+        // 3. 앨범 아트 다중 화질 추적 및 타임아웃 최적화
         const albumArtEl = document.getElementById('album-art');
         const lpCover = document.getElementById('lp-widget-cover');
+        let originalArt = track.albumArt;
+        let tryUrls = [];
 
-        // 🚨 앨범 아트 교체 시 페이드 효과 적용
-        if (track.albumArt && albumArtEl && albumArtEl.src !== track.albumArt) {
-
-            albumArtEl.classList.remove('visible'); // Bar 모드 투명화
-            if (lpCover) lpCover.classList.add('fade'); // LP 모드 투명화
-
-            // 새 이미지가 완전히 로드된 후에 화면에 띄우기 (깜빡임 방지)
-            const tempImg = new Image();
-            tempImg.src = track.albumArt;
-            tempImg.onload = () => {
-                // Bar 모드 이미지 적용
-                albumArtEl.src = track.albumArt;
-                albumArtEl.classList.add('visible');
-                applyGradient(albumArtEl);
-
-                // LP 모드 이미지 적용 및 페이드 인
-                if (lpCover) {
-                    lpCover.src = track.albumArt;
-                    lpCover.classList.remove('fade');
+        if (originalArt) {
+            if (originalArt.includes('i.ytimg.com')) {
+                const vid = originalArt.match(/\/vi\/([^\/]+)\//)?.[1];
+                if (vid) {
+                    tryUrls.push(`https://i.ytimg.com/vi/${vid}/maxresdefault.jpg`);
+                    tryUrls.push(`https://i.ytimg.com/vi/${vid}/sddefault.jpg`);
                 }
+            } else {
+                tryUrls.push(originalArt.replace(/([=-])w\d+-h\d+/, '$1w1024-h1024'));
+                tryUrls.push(originalArt.replace(/([=-])w\d+-h\d+/, '$1w544-h544'));
+            }
+            tryUrls.push(originalArt);
+        }
+
+        if (originalArt && albumArtEl && albumArtEl.getAttribute('data-src') !== originalArt) {
+            albumArtEl.setAttribute('data-src', originalArt);
+            albumArtEl.classList.remove('visible');
+            if (lpCover) lpCover.classList.add('fade');
+
+            const loadNextImage = (index) => {
+                if (index >= tryUrls.length) return;
+                const tempImg = new Image();
+                tempImg.crossOrigin = 'Anonymous';
+
+                // ⏱️ 타임아웃: 2.5초 이상 걸리면 다음 화질로 강제 전환
+                const timeoutId = setTimeout(() => {
+                    tempImg.src = "";
+                    loadNextImage(index + 1);
+                }, 2500);
+
+                tempImg.onload = () => {
+                    clearTimeout(timeoutId);
+                    albumArtEl.crossOrigin = 'Anonymous';
+                    albumArtEl.src = tryUrls[index];
+                    albumArtEl.classList.add('visible');
+                    // 색상 추출 및 배경색 적용
+                    setTimeout(() => { try { applyGradient(albumArtEl); } catch (e) { } }, 50);
+                    if (lpCover) {
+                        lpCover.crossOrigin = 'Anonymous';
+                        lpCover.src = tryUrls[index];
+                        lpCover.classList.remove('fade');
+                    }
+                };
+
+                tempImg.onerror = () => {
+                    clearTimeout(timeoutId);
+                    loadNextImage(index + 1);
+                };
+                tempImg.src = tryUrls[index];
             };
+            loadNextImage(0);
         }
 
-        if (appConfig.musicService === 'youtube') {
-            startEQ();
-        } else {
-            stopEQ();
-        }
+        // 서비스가 유튜브일 경우 이퀄라이저 실행 재확인
+        if (appConfig.musicService === 'youtube' && !wsClient) startEQ();
 
-    } catch (e) { console.error('동기화 실패:', e); }
+    } catch (e) {
+        console.error('동기화 실패:', e);
+        if (appConfig.musicService === 'youtube') startEQ(); // 에러 발생 시 세션 재연결 시도
+    }
 }
 
 function tickProgress() {
     if (!isPlaying || lastSyncTime === null || !trackDuration || trackDuration <= 0) {
-        requestAnimationFrame(tickProgress);
-        return;
+        requestAnimationFrame(tickProgress); return;
     }
-
     const now = performance.now();
     const progress = Math.min(localProgress + (now - lastSyncTime), trackDuration);
     let percent = Math.max(0, Math.min(100, (progress / trackDuration) * 100));
@@ -331,31 +433,24 @@ function tickProgress() {
     const lpProgressFill = document.getElementById('lp-progress-fill');
     if (lpProgressFill) lpProgressFill.style.width = `${percent}%`;
 
-    // 🚨 최적화: 가사 갱신 체크는 100ms(0.1초)에 한 번만 실행하여 CPU 점유율 대폭 하락
     if (currentLyrics.length > 0 && (now - lastLyricCheckTime > 100)) {
         lastLyricCheckTime = now;
         const { prev, current, next, idx } = getLyricContext(progress + 1000 + appConfig.syncOffset);
-        if (idx !== lastLyricIdx) {
-            lastLyricIdx = idx;
-            updateLyrics(prev, current, next);
-        }
+        if (idx !== lastLyricIdx) { lastLyricIdx = idx; updateLyrics(prev, current, next); }
     }
-
     requestAnimationFrame(tickProgress);
 }
 
-// ─── 🎛️ 미디어 컨트롤 & 제어 ─────────────────────────────
+// ═════════════════════════════════════════════════════════════
+//  7. 🎛️ 미디어 컨트롤 및 이퀄라이저 (스프링 물리)
+// ═════════════════════════════════════════════════════════════
 async function sendControlRequest(command) {
     if (command === 'play-pause') {
         const wasPlaying = isPlaying;
-        // 즉각적인 UI 반응을 위해 로컬 상태 먼저 변경
         isPlaying = !wasPlaying;
         document.getElementById('btn-play-pause').textContent = isPlaying ? '⏸' : '▶';
-
         await fetch('http://127.0.0.1:8888/play-pause', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ playing: wasPlaying })
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ playing: wasPlaying })
         });
     } else {
         lastTitle = ''; lastLyricIdx = -1; currentLyrics = []; updateLyrics('', '🎵', '');
@@ -371,47 +466,48 @@ document.getElementById('lp-btn-prev')?.addEventListener('click', () => sendCont
 document.getElementById('btn-next')?.addEventListener('click', () => sendControlRequest('next'));
 document.getElementById('lp-btn-next')?.addEventListener('click', () => sendControlRequest('next'));
 
-// ─── 📉 이퀄라이저 (EQ) 로직 (관성/스프링 물리 적용) ─────────────────
 let wsClient = null;
 let visualizerMode = 'BARS';
-let eqAnimationFrameId = null; // 프레임 제어용
+let eqAnimationFrameId = null;
 
-document.getElementById('equalizer')?.addEventListener('click', () => {
-    visualizerMode = visualizerMode === 'BARS' ? 'WAVE' : 'BARS';
-});
+document.getElementById('equalizer')?.addEventListener('click', () => { visualizerMode = visualizerMode === 'BARS' ? 'WAVE' : 'BARS'; });
 
+// 이퀄라이저 시작 함수 수정
 function startEQ() {
-    if (wsClient) return;
+    // 이미 연결이 열려있는 상태라면 중복 생성 방지
+    if (wsClient && wsClient.readyState === WebSocket.OPEN) return;
+
+    // 비정상적인 기존 연결이 남아있다면 정리
+    if (wsClient) stopEQ();
+
     try {
-        wsClient = new WebSocket('ws://127.0.0.1:8889');
-        wsClient.onopen = () => wsClient.send(JSON.stringify({ type: 'register_renderer' }));
+        wsClient = new WebSocket('ws://127.0.0.1:8889'); //
+
+        wsClient.onopen = () => {
+            console.log("EQ 소켓 연결 성공");
+            wsClient.send(JSON.stringify({ type: 'register_renderer' }));
+        };
 
         const bars = document.querySelectorAll('#equalizer .bar');
-
-        // 🚨 스프링 물리를 위한 위치(value)와 속도(velocity) 배열
         let currentValues = new Array(10).fill(0);
         let velocities = new Array(10).fill(0);
-
         let latestEqData = new Array(10).fill(0);
         let currentRenderMode = '';
 
-        // 🧲 다이내믹 아일랜드 느낌의 물리 상수
-        const STIFFNESS = 0.25; // 탄성 (숫자가 높을수록 목표치로 팽팽하게 당김)
-        const DAMPING = 0.65;   // 감쇠 (숫자가 낮을수록 더 많이 통통 튕김)
+        const STIFFNESS = 0.25;
+        const DAMPING = 0.65;
 
         function renderVisualizer() {
-            // 정지 상태면 목표값을 0으로 서서히 가라앉게 함
             if (!isPlaying) {
                 latestEqData = new Array(10).fill(0);
             }
 
             let isAnimating = false;
 
-            // 모드가 바뀌었을 때만 스타일을 덮어씌움 (Reflow 최소화)
             if (currentRenderMode !== visualizerMode) {
                 currentRenderMode = visualizerMode;
                 bars.forEach(bar => {
-                    // 🚨 핵심: JS에서 초당 60프레임으로 크기를 바꾸기 때문에 CSS transform transition을 해제해야 충돌(버벅임)이 사라집니다.
+                    // 🚨 핵심: 자바스크립트 제어 시 CSS transition과의 충돌 방지
                     bar.style.transition = 'background 0.5s ease, box-shadow 0.5s ease';
                     if (visualizerMode === 'BARS') {
                         bar.style.height = '16px';
@@ -425,22 +521,18 @@ function startEQ() {
 
             bars.forEach((bar, index) => {
                 let targetValue = (latestEqData[index] || 0) * 0.5;
-
-                // 📐 관성 & 스프링 물리 연산 코어
                 let diff = targetValue - currentValues[index];
                 velocities[index] += diff * STIFFNESS;
                 velocities[index] *= DAMPING;
                 currentValues[index] += velocities[index];
 
-                // 스프링이 완전히 멈췄는지 판단 (최적화)
                 if (Math.abs(velocities[index]) < 0.1 && Math.abs(diff) < 0.1) {
                     velocities[index] = 0;
                     currentValues[index] = targetValue;
                 } else {
-                    isAnimating = true; // 아직 튕기고 있음
+                    isAnimating = true;
                 }
 
-                // 렌더링 값 제한 (0 미만으로 떨어져 UI가 망가지는 것 방지)
                 let value = Math.max(0, Math.min(currentValues[index], 180));
 
                 if (visualizerMode === 'BARS') {
@@ -448,7 +540,6 @@ function startEQ() {
                     let boostMultiplier = 1 + (index / (bars.length - 1)) * 1.5;
                     if (index === 0) boostMultiplier *= 1.8;
                     if (index === 1) boostMultiplier *= 1.6;
-
                     bar.style.transform = `scaleY(${Math.min(baseScale * boostMultiplier, 1.8)})`;
                 } else {
                     let totalVolume = currentValues.reduce((a, b) => a + b, 0);
@@ -456,7 +547,6 @@ function startEQ() {
                 }
             });
 
-            // 재생 중이거나 아직 스프링 애니메이션의 여음이 남아있다면 루프 계속 진행
             if (isPlaying || isAnimating) {
                 eqAnimationFrameId = requestAnimationFrame(renderVisualizer);
             } else {
@@ -468,7 +558,6 @@ function startEQ() {
             const msg = JSON.parse(event.data);
             if (msg.type === 'eq_data') {
                 latestEqData = msg.data;
-                // 루프가 꺼져있는데 데이터가 들어왔다면 엔진 재가동
                 if (!eqAnimationFrameId) {
                     eqAnimationFrameId = requestAnimationFrame(renderVisualizer);
                 }
@@ -478,30 +567,46 @@ function startEQ() {
         wsClient.onerror = () => stopEQ();
         wsClient.onclose = () => stopEQ();
 
-    } catch (e) { stopEQ(); }
+    } catch (e) {
+        console.error("EQ 시작 실패:", e);
+        stopEQ();
+    }
 }
 
+// 이퀄라이저 중단 함수 수정
 function stopEQ() {
-    if (wsClient) { wsClient.close(); wsClient = null; }
-    if (eqAnimationFrameId) { cancelAnimationFrame(eqAnimationFrameId); eqAnimationFrameId = null; }
+    if (wsClient) {
+        wsClient.onopen = null;
+        wsClient.onmessage = null;
+        wsClient.onerror = null;
+        wsClient.onclose = null;
+        if (wsClient.readyState === WebSocket.OPEN) {
+            wsClient.close();
+        }
+        wsClient = null;
+    }
+    if (eqAnimationFrameId) {
+        cancelAnimationFrame(eqAnimationFrameId);
+        eqAnimationFrameId = null;
+    }
 
     document.querySelectorAll('#equalizer .bar').forEach(bar => {
+        // 중단 시에만 다시 transition을 적용하여 부드럽게 복구
         bar.style.transition = 'height 0.12s ease, transform 0.12s ease, background 0.5s ease';
         bar.style.height = '3px';
         bar.style.transform = 'translateY(0) scaleY(1)';
     });
 }
 
-// ─── ⚙️ UI 업데이트 및 설정 로직 ──────────────────────────
+// ═════════════════════════════════════════════════════════════
+//  8. ⚙️ UI 업데이트 및 설정 모달 이벤트 바인딩
+// ═════════════════════════════════════════════════════════════
 function applyConfigToUI() {
     document.body.setAttribute('data-service', appConfig.musicService);
-
-    // 플랫폼 버튼 활성화
     document.querySelectorAll('.service-pills .theme-pill').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.service === appConfig.musicService);
     });
 
-    // PRO 구역 자동 판별 및 상태 업데이트
     const allSettings = document.querySelectorAll('.settings-section, .setting-item');
     const proSections = Array.from(allSettings).filter(sec => sec.querySelector('.pro-badge'));
     const licenseSection = document.getElementById('license-section');
@@ -520,14 +625,13 @@ function applyConfigToUI() {
         proSections.forEach(sec => sec.classList.add('section-disabled'));
     }
 
-    // 유튜브 자동 페이드 잠금 로직
     const autoFadeToggle = document.getElementById('auto-fade-toggle');
     if (autoFadeToggle) {
         const autoFadeSection = autoFadeToggle.closest('.settings-section, .setting-item');
         if (appConfig.musicService === 'youtube') {
             autoFadeToggle.disabled = true;
             if (autoFadeSection) { autoFadeSection.style.opacity = '0.4'; autoFadeSection.style.pointerEvents = 'none'; }
-            disableAutoFade(); // 강제 해제
+            disableAutoFade();
         } else {
             autoFadeToggle.disabled = false;
             if (autoFadeSection && appConfig.isPro) { autoFadeSection.style.opacity = '1'; autoFadeSection.style.pointerEvents = 'auto'; }
@@ -536,7 +640,6 @@ function applyConfigToUI() {
         autoFadeToggle.checked = appConfig.autoFade;
     }
 
-    // 기타 토글 및 슬라이더 업데이트
     const opacitySlider = document.getElementById('opacity-slider');
     if (opacitySlider) {
         opacitySlider.value = appConfig.opacity;
@@ -561,9 +664,8 @@ function applyConfigToApp() {
         if (barMode) barMode.style.opacity = appConfig.opacity;
         if (lpMode) lpMode.style.opacity = appConfig.opacity;
     }
-
     document.body.setAttribute('data-theme', appConfig.theme);
-    applyGradient(null); // 테마 변경 시 배경 재적용
+    applyGradient(null);
 
     ipcRenderer.send('update-system-settings', {
         alwaysOnTop: appConfig.alwaysOnTop,
@@ -573,7 +675,6 @@ function applyConfigToApp() {
     });
 }
 
-// ─── 🖱️ UI 인터랙션 및 자동 페이드 로직 ──────────────────
 function scheduleFade() {
     clearTimeout(fadeTimer);
     fadeTimer = setTimeout(() => {
@@ -602,7 +703,6 @@ function disableAutoFade() {
     document.getElementById('opacity-section')?.classList.remove('section-disabled');
 }
 
-// 설정창 이벤트 바인딩
 document.getElementById('license-activate')?.addEventListener('click', () => {
     const key = document.getElementById('license-input').value.trim();
     if (key.startsWith('PRO-')) {
@@ -615,37 +715,21 @@ document.getElementById('license-activate')?.addEventListener('click', () => {
 });
 
 document.getElementById('license-reset')?.addEventListener('click', () => {
-    appConfig.isPro = false;
-    appConfig.theme = 'auto'; // 테마도 리셋
+    appConfig.isPro = false; appConfig.theme = 'auto';
     saveSettings(); applyConfigToUI();
 });
 
-// 플랫폼 변경
 window.changeService = async function (service) {
     appConfig.musicService = service;
-    saveSettings();
-    applyConfigToUI();
+    saveSettings(); applyConfigToUI();
+    if (service === 'spotify') stopEQ(); else if (service === 'youtube') startEQ();
 
-    if (service === 'spotify') {
-        stopEQ();
-    } else if (service === 'youtube') {
-        startEQ();
-    }
-
-    // 서버에 플랫폼 변경 알림 및 상태 확인
     const res = await fetch('http://127.0.0.1:8888/set-service', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ service: service })
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ service: service })
     }).then(r => r.json());
 
-    // 강제 동기화 실행
     syncWithServer();
-
-    // 🚨 서버에서 API 키가 없다고 판단(needsSetup: true)했을 때만 셋업 창 열기
-    if (res.needsSetup) {
-        ipcRenderer.send('open-setup-window');
-    }
+    if (res.needsSetup) ipcRenderer.send('open-setup-window');
 }
 
 document.getElementById('opacity-slider')?.addEventListener('input', (e) => {
@@ -681,7 +765,9 @@ document.querySelectorAll('.tray-icon-pills .theme-pill').forEach(btn => {
     btn.addEventListener('click', (e) => { appConfig.trayIcon = e.currentTarget.dataset.icon; saveSettings(); applyConfigToUI(); });
 });
 
-// ─── 🪟 IPC & 창 제어 ──────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
+//  9. 🪟 IPC 수신 (메인 프로세스와 통신)
+// ═════════════════════════════════════════════════════════════
 ipcRenderer.on('change-style', (event, style) => {
     const barMode = document.getElementById('bar-mode');
     const lpMode = document.getElementById('lp-mode');
@@ -691,7 +777,13 @@ ipcRenderer.on('change-style', (event, style) => {
 });
 
 ipcRenderer.on('hide-widget-for-settings', () => document.body.classList.add('settings-open'));
-ipcRenderer.on('open-settings', () => document.getElementById('settings-modal').classList.add('show'));
+
+// 🚨 설정창 열기 시 전체화면 해제 로직
+ipcRenderer.on('open-settings', () => {
+    if (isFullscreen) toggleFullscreen();
+    document.getElementById('settings-modal').classList.add('show');
+});
+
 ipcRenderer.on('show-widget-after-settings', () => document.body.classList.remove('settings-open'));
 
 document.getElementById('settings-close')?.addEventListener('click', closeSettingsModal);
@@ -704,7 +796,9 @@ function closeSettingsModal() {
     }, 350);
 }
 
-// ─── 🚀 부팅 ──────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
+//  10. 🚀 앱 부팅 및 메인 루프 실행
+// ═════════════════════════════════════════════════════════════
 initSettings();
 tickProgress();
 syncWithServer();

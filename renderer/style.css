@@ -3,6 +3,7 @@
     --highlight-color: #1DB954;
     --highlight-bg: rgba(29, 185, 84, 0.12);
     --highlight-border: rgba(29, 185, 84, 0.35);
+    --bg-color: #1a1a1a;
 }
 
 * {
@@ -19,6 +20,9 @@ body {
     margin: 0;
 }
 
+/* ═════════════════════════════════════════════════════════════
+   1. 위젯 모드 (가로 얇은 바 형태)
+═════════════════════════════════════════════════════════════ */
 #bar-mode {
     width: 100%;
     height: 100%;
@@ -42,13 +46,11 @@ body {
     pointer-events: auto !important;
 }
 
-/* ─── 바 ───────────────────────────────────────────────── */
 #bar {
     display: flex;
     align-items: center;
     height: 44px;
     width: 100%;
-    /* 부모(#bar-mode) 크기에 맞춤 */
     background: rgba(15, 15, 15, 0.92);
     backdrop-filter: blur(20px);
     border: none;
@@ -59,7 +61,6 @@ body {
     overflow: hidden;
 }
 
-/* ─── 앨범 아트 ─────────────────────────────────────────── */
 #album-art {
     width: 30px;
     height: 30px;
@@ -74,12 +75,16 @@ body {
     opacity: 1;
 }
 
-/* ─── 트랙 정보 ─────────────────────────────────────────── */
 #track-info {
     display: flex;
     flex-direction: column;
     min-width: 140px;
     max-width: 180px;
+    transition: opacity 0.4s ease;
+}
+
+#track-info.fade {
+    opacity: 0;
 }
 
 #title {
@@ -101,22 +106,27 @@ body {
     transition: color 1.5s ease;
 }
 
-/* ─── 가사 ──────────────────────────────────────────────── */
+/* 🚧 위젯 모드 가사 영역 (UI 침범 방지) */
 #lyrics-container {
     flex: 1;
     overflow: hidden;
-    position: relative;
+    position: absolute !important;
+    left: 240px !important;
+    right: 300px !important;
     height: 44px;
-    -webkit-mask-image: linear-gradient(to right,
-            transparent 0%,
-            black 15%,
-            black 85%,
-            transparent 100%);
-    mask-image: linear-gradient(to right,
-            transparent 0%,
-            black 15%,
-            black 85%,
-            transparent 100%);
+    transition: opacity 0.4s ease;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0%, black 10%, black 90%, transparent 100%);
+    mask-image: linear-gradient(90deg, transparent 0%, black 10%, black 90%, transparent 100%);
+}
+
+#lyrics-container.fade {
+    opacity: 0;
+}
+
+#prev-lyric,
+#current-lyric,
+#next-lyric {
+    white-space: nowrap !important;
 }
 
 #prev-lyric {
@@ -125,7 +135,6 @@ body {
     transform: translateY(-50%);
     color: rgba(255, 255, 255, 0.25);
     font-size: 11px;
-    white-space: nowrap;
     transition: opacity 0.2s ease;
 }
 
@@ -137,7 +146,6 @@ body {
     color: rgba(255, 255, 255, 0.95);
     font-size: 12px;
     font-weight: 600;
-    white-space: nowrap;
     transition: opacity 0.1s ease;
 }
 
@@ -147,11 +155,9 @@ body {
     transform: translateY(-50%);
     color: rgba(255, 255, 255, 0.25);
     font-size: 11px;
-    white-space: nowrap;
     transition: opacity 0.2s ease;
 }
 
-/* ─── 이퀄라이저 ────────────────────────────────────────── */
 #equalizer {
     display: flex;
     align-items: center;
@@ -163,7 +169,6 @@ body {
     padding-right: 6px;
     cursor: pointer;
     -webkit-app-region: no-drag;
-    /* 👇 추가: 이퀄라이저 클릭이 가능하도록 드래그 속성 해제 */
 }
 
 #equalizer .bar {
@@ -172,10 +177,8 @@ body {
     background: var(--theme-color);
     border-radius: 3px !important;
     box-shadow: 0 0 6px var(--theme-color);
-    transition: height 0.12s cubic-bezier(0.4, 0, 0.2, 1),
-        transform 0.12s ease,
-        background 0.5s ease,
-        box-shadow 0.5s ease;
+    /* 🚨 배경과 그림자 효과에만 transition 적용 */
+    transition: background 0.5s ease, box-shadow 0.5s ease;
     will-change: height, transform;
 }
 
@@ -202,7 +205,6 @@ body {
     color: #fff;
 }
 
-/* ─── 진행바 ─────────────────────────────────────────────── */
 #progress-bar {
     width: 80px;
     height: 3px;
@@ -220,18 +222,37 @@ body {
     transition: width 1s linear, background 0.5s ease, box-shadow 0.5s ease;
 }
 
-/* ─── 페이드 트랜지션 ───────────────────────────────────── */
-#track-info,
-#lyrics-container {
-    transition: opacity 0.4s ease;
+#btn-fullscreen {
+    -webkit-appearance: none;
+    background: transparent !important;
+    border: none !important;
+    color: rgba(255, 255, 255, 0.7) !important;
+    font-size: 18px !important;
+    cursor: pointer !important;
+    padding: 8px !important;
+    border-radius: 8px !important;
+    margin-left: 5px !important;
+    outline: none !important;
+    transition: all 0.2s ease-in-out !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    -webkit-app-region: no-drag;
 }
 
-#track-info.fade,
-#lyrics-container.fade {
-    opacity: 0;
+#btn-fullscreen:hover {
+    background: rgba(255, 255, 255, 0.15) !important;
+    color: #ffffff !important;
+    transform: scale(1.05) !important;
 }
 
-/* --- LP 위젯 --- */
+#btn-fullscreen:active {
+    transform: scale(0.95) !important;
+}
+
+/* ═════════════════════════════════════════════════════════════
+   2. LP 위젯 모드
+═════════════════════════════════════════════════════════════ */
 #lp-mode {
     width: 320px;
     height: 320px;
@@ -242,18 +263,11 @@ body {
     left: 50%;
     display: flex;
     flex-direction: column;
-
     transform: translate(-50%, -50%) scale(0.95);
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
-
-    transition:
-        opacity 0.4s ease,
-        transform 0.4s ease,
-        visibility 0.4s,
-        background 1.5s ease;
-
+    transition: opacity 0.4s ease, transform 0.4s ease, visibility 0.4s, background 1.5s ease;
     -webkit-app-region: drag;
     border: 1px solid transparent;
     background-clip: padding-box;
@@ -261,8 +275,8 @@ body {
     mask-image: radial-gradient(white, black);
     isolation: isolate;
     overflow: hidden;
-
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+    outline: none;
 }
 
 .lp-widget-bg {
@@ -304,7 +318,6 @@ body {
 
 #lp-widget-cover {
     width: 90px;
-    /* 👈 이미지에 맞춰 120px로 확대 */
     height: 90px;
     border-radius: 50%;
     object-fit: cover;
@@ -426,20 +439,17 @@ div:focus {
     -webkit-tap-highlight-color: transparent;
 }
 
-#lp-mode {
-    overflow: hidden;
-    border: none;
-    outline: none;
-}
-
 img {
     -webkit-user-drag: none;
     border: none;
     outline: none;
 }
 
-/* ─── 설정 모달 ──────────────────────────────────────────── */
-#settings-modal {
+/* ═════════════════════════════════════════════════════════════
+   3. 모달 (설정 및 업그레이드 창) 및 글로벌 테마 연동
+═════════════════════════════════════════════════════════════ */
+#settings-modal,
+#upgrade-modal {
     display: flex;
     visibility: hidden;
     pointer-events: none;
@@ -455,12 +465,19 @@ img {
     -webkit-app-region: no-drag;
 }
 
-#settings-modal.show {
-    visibility: visible;
-    pointer-events: all;
+#upgrade-modal {
+    z-index: 15;
+    opacity: 0;
+    transition: opacity 0.25s ease, visibility 0.25s ease;
 }
 
-/* ─── 설정 패널 ───────────────────────────────────────────── */
+#settings-modal.show,
+#upgrade-modal.show {
+    visibility: visible;
+    pointer-events: all;
+    opacity: 1;
+}
+
 #settings-panel {
     width: 300px;
     max-height: calc(100vh - 80px);
@@ -471,18 +488,14 @@ img {
     -webkit-backdrop-filter: blur(40px);
     border-radius: 20px;
     border: 1px solid rgba(255, 255, 255, 0.07);
-    box-shadow:
-        0 32px 64px rgba(0, 0, 0, 0.7),
-        inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+    box-shadow: 0 32px 64px rgba(0, 0, 0, 0.7), inset 0 0 0 1px rgba(255, 255, 255, 0.03);
     padding: 20px;
     display: flex;
     flex-direction: column;
     -webkit-app-region: no-drag;
     transform: translateY(620px);
     opacity: 0;
-    transition:
-        transform 0.52s cubic-bezier(0.16, 1, 0.3, 1),
-        opacity 0.18s ease;
+    transition: transform 0.52s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.18s ease;
 }
 
 #settings-panel::-webkit-scrollbar {
@@ -497,12 +510,9 @@ img {
 #settings-modal.closing #settings-panel {
     transform: translateY(620px);
     opacity: 0;
-    transition:
-        transform 0.32s cubic-bezier(0.4, 0, 1, 1),
-        opacity 0.2s ease;
+    transition: transform 0.32s cubic-bezier(0.4, 0, 1, 1), opacity 0.2s ease;
 }
 
-/* ─── 헤더 ────────────────────────────────────────────────── */
 #settings-header {
     display: flex;
     justify-content: space-between;
@@ -551,7 +561,7 @@ img {
 #license-status {
     font-size: 10px;
     font-weight: 500;
-    color: rgba(255, 255, 255, 0.38);
+    transition: color 0.3s ease;
 }
 
 #license-reset {
@@ -560,7 +570,6 @@ img {
     border: none;
     color: rgba(255, 255, 255, 0.25);
     font-size: 9px;
-    font-family: inherit;
     cursor: pointer;
     padding: 0;
     transition: color 0.2s;
@@ -590,14 +599,12 @@ img {
     color: #fff;
 }
 
-/* ─── 구분선 ──────────────────────────────────────────────── */
 .s-divider {
     height: 1px;
     background: rgba(255, 255, 255, 0.06);
     margin: 0 -20px;
 }
 
-/* ─── 섹션 ────────────────────────────────────────────────── */
 .settings-section {
     padding: 12px 0;
     display: flex;
@@ -610,11 +617,6 @@ img {
     margin-bottom: 0 !important;
 }
 
-#service-selection-section {
-    padding-top: 0 !important;
-    margin-top: -2px !important;
-}
-
 .settings-row-between {
     flex-direction: row;
     justify-content: space-between;
@@ -624,7 +626,6 @@ img {
 .settings-label {
     padding-top: 10px;
     margin-bottom: 2px !important;
-    /* 라벨 바로 아래 공백 축소 */
     color: rgba(255, 255, 255, 0.38);
     font-size: 10px;
     font-weight: 600;
@@ -642,7 +643,6 @@ img {
     letter-spacing: 0;
 }
 
-/* ─── 라이센스 ────────────────────────────────────────────── */
 .settings-row {
     display: flex;
     gap: 8px;
@@ -658,12 +658,7 @@ img {
     padding: 8px 10px;
     font-size: 11px;
     outline: none;
-    font-family: inherit;
     transition: border-color 0.2s, background 0.2s;
-}
-
-#license-input::placeholder {
-    color: rgba(255, 255, 255, 0.2);
 }
 
 #license-input:focus {
@@ -680,7 +675,6 @@ img {
     cursor: pointer;
     font-size: 11px;
     font-weight: 700;
-    font-family: inherit;
     transition: background 0.2s, border-color 0.2s, transform 0.1s;
 }
 
@@ -702,33 +696,12 @@ img {
     pointer-events: none;
 }
 
-/* ─── 투명도 ──────────────────────────────────────────────── */
-
-body[data-service="youtube"] .value-chip {
-    color: #ff0033 !important;
-    background: rgba(255, 0, 0, 0.12) !important;
-}
-
-body[data-service="spotify"] .value-chip {
-    color: #1DB954 !important;
-    background: rgba(29, 185, 84, 0.12) !important;
-}
-
-.value-chip {
-    font-size: 11px;
-    font-weight: 600;
-    padding: 3px 9px;
-    border-radius: 20px;
-    transition: all 0.3s ease;
-}
-
 #opacity-slider {
     width: 100%;
     accent-color: var(--highlight-color) !important;
     cursor: pointer;
 }
 
-/* ─── 가사 싱크 스텝퍼 ────────────────────────────────────── */
 .stepper-row {
     display: flex;
     align-items: stretch;
@@ -746,7 +719,6 @@ body[data-service="spotify"] .value-chip {
     cursor: pointer;
     font-size: 11px;
     font-weight: 500;
-    font-family: inherit;
     flex-shrink: 0;
     transition: background 0.15s, color 0.15s;
 }
@@ -754,10 +726,6 @@ body[data-service="spotify"] .value-chip {
 .stepper-btn:hover {
     background: rgba(255, 255, 255, 0.07);
     color: #fff;
-}
-
-.stepper-btn:active {
-    background: rgba(255, 255, 255, 0.11);
 }
 
 #offset-display {
@@ -772,7 +740,6 @@ body[data-service="spotify"] .value-chip {
     letter-spacing: -0.2px;
 }
 
-/* ─── 토글 ────────────────────────────────────────────────── */
 .toggle {
     position: relative;
     width: 40px;
@@ -816,7 +783,6 @@ body[data-service="spotify"] .value-chip {
     transform: translateX(18px);
 }
 
-/* ─── 기타 설정 모달 UI 그룹 ──────────────────────────────── */
 .shortcut-label-group {
     display: flex;
     flex-direction: column;
@@ -828,13 +794,21 @@ body[data-service="spotify"] .value-chip {
     pointer-events: none;
 }
 
-/* ─── 바 테마 ─────────────────────────────────────────────── */
-.theme-pills {
+.shortcut-hint {
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.25);
+    letter-spacing: 0.2px;
+}
+
+.theme-pills,
+.service-pills,
+.setting-pills {
     display: flex;
     gap: 6px;
 }
 
-.theme-pill {
+.theme-pill,
+.pill-btn {
     flex: 1;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.08);
@@ -844,50 +818,33 @@ body[data-service="spotify"] .value-chip {
     cursor: pointer;
     font-size: 10px;
     font-weight: 500;
-    font-family: inherit;
-    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    text-align: center;
+    transition: all 0.15s ease;
 }
 
-.theme-pill:hover {
+.theme-pill:hover,
+.pill-btn:hover {
     background: rgba(255, 255, 255, 0.09);
     color: #fff;
 }
 
-.theme-pill.active {
+.theme-pill.active,
+.pill-btn.active {
     background: var(--highlight-bg) !important;
     border-color: var(--highlight-border) !important;
     color: var(--highlight-color) !important;
     font-weight: 600;
 }
 
-.shortcut-hint {
-    font-size: 10px;
-    color: rgba(255, 255, 255, 0.25);
-    letter-spacing: 0.2px;
+.service-pills .theme-pill {
+    border-radius: 50px;
 }
 
-/* ─── 업그레이드 모달 ─────────────────────────────────────── */
-#upgrade-modal {
-    display: flex;
-    visibility: hidden;
-    opacity: 0;
-    pointer-events: none;
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    z-index: 15;
-    justify-content: center;
-    align-items: center;
-    transition: opacity 0.25s ease, visibility 0.25s ease;
-    -webkit-app-region: no-drag;
-}
-
-#upgrade-modal.show {
-    visibility: visible;
-    opacity: 1;
-    pointer-events: all;
+.pill-btn {
+    padding: 10px;
+    border-radius: 8px;
+    font-size: 14px;
+    color: #ccc;
 }
 
 #upgrade-panel {
@@ -904,12 +861,9 @@ body[data-service="spotify"] .value-chip {
     flex-direction: column;
     align-items: center;
     gap: 8px;
-    -webkit-app-region: no-drag;
     transform: translateY(22px) scale(0.95);
     opacity: 0;
-    transition:
-        transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1),
-        opacity 0.28s ease;
+    transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.28s ease;
 }
 
 #upgrade-modal.show #upgrade-panel {
@@ -943,7 +897,6 @@ body[data-service="spotify"] .value-chip {
     cursor: pointer;
     font-size: 11px;
     font-weight: 600;
-    font-family: inherit;
     transition: background 0.2s, color 0.2s;
 }
 
@@ -957,7 +910,6 @@ body.settings-open #lp-mode {
     opacity: 0 !important;
     visibility: hidden !important;
     transform: translate(-50%, -50%) scale(0.95) !important;
-    /* 살짝 작아지며 사라지는 효과 */
     pointer-events: none !important;
 }
 
@@ -967,78 +919,226 @@ body[data-service="youtube"] {
     --highlight-border: rgba(255, 0, 0, 0.35);
 }
 
-body[data-service="youtube"] .pro-badge {
-    color: #FFFFFF !important;
-}
-
-/* 🚨 YouTube 모드일 때 아이콘 안의 음표 색상을 하얀색으로 */
+body[data-service="youtube"] .pro-badge,
 body[data-service="youtube"] .brand-icon {
     color: #FFFFFF !important;
 }
 
-/* 🚨 PRO Active 텍스트 색상을 하이라이트 컬러에 연동 */
-#license-status {
-    /* 기존 고정 색상 대신 변수 사용 또는 직접 지정 */
-    transition: color 0.3s ease;
-}
-
 body[data-service="youtube"] #license-status {
     color: #FF0000 !important;
-    /* YouTube Red */
 }
 
 body[data-service="spotify"] #license-status {
     color: #1DB954 !important;
-    /* Spotify Green */
 }
 
-.service-pills .theme-pill {
-    flex: 1;
-    padding: 6px 10px;
-    background: transparent;
-    /* 배경을 투명하게 해서 아래 버튼들과 통일 */
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    color: #aaa;
-    border-radius: 50px;
-    cursor: pointer;
-    font-size: 10px;
-    transition: all 0.2s ease;
+body[data-service="youtube"] .value-chip {
+    color: #ff0033 !important;
+    background: rgba(255, 0, 0, 0.12) !important;
 }
 
-.service-pills {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 10px;
+body[data-service="spotify"] .value-chip {
+    color: #1DB954 !important;
+    background: rgba(29, 185, 84, 0.12) !important;
 }
 
-/* 활성화된 버튼 스타일 (테두리나 배경색 변경) */
-.service-pills .theme-pill.active {
-    border-color: var(--highlight-color) !important;
-    color: var(--highlight-color) !important;
-    background: var(--highlight-bg) !important;
+.value-chip {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 9px;
+    border-radius: 20px;
+    transition: all 0.3s ease;
 }
 
-.setting-pills {
-    display: flex;
-    gap: 8px;
-    margin-top: 8px;
+/* ═════════════════════════════════════════════════════════════
+   4. 🍎 애플 뮤직 스타일 전체화면 모드 (완벽 호환)
+═════════════════════════════════════════════════════════════ */
+body.fullscreen-mode {
+    background: var(--bg-color, #1a1a1a) !important;
+    transition: background 0.8s ease-in-out !important;
 }
 
-.pill-btn {
-    flex: 1;
-    /* 🚨 버튼이 가로 공간을 똑같이 나눠 갖도록 설정 */
-    padding: 10px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: #ccc;
-    border-radius: 8px;
-    cursor: pointer;
-    font-size: 14px;
-    transition: all 0.2s ease;
+body.fullscreen-mode #bar-mode,
+body.fullscreen-mode #bar {
+    background: transparent !important;
+    box-shadow: none !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
 }
 
-.pill-btn.active {
-    background: var(--highlight-bg) !important;
-    border-color: var(--highlight-color) !important;
-    color: var(--highlight-color) !important;
+/* ─── 좌측: 앨범 아트 ─── */
+body.fullscreen-mode #album-art {
+    position: fixed !important;
+    left: 10vw !important;
+    top: 15vh !important;
+    width: 45vh !important;
+    height: 45vh !important;
+    min-width: 300px !important;
+    min-height: 300px !important;
+    border-radius: 16px !important;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3) !important;
+}
+
+/* ─── 좌측: 곡 정보 상자 (내용물에 맞춰 동적 높이 증가) ─── */
+body.fullscreen-mode #track-info {
+    position: fixed !important;
+    left: 10vw !important;
+    top: calc(15vh + 45vh + 30px) !important;
+    width: 45vh !important;
+    min-width: 300px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: flex-start !important;
+    height: auto !important;
+    /* 글자 높이만큼 늘어남 */
+    text-align: left !important;
+}
+
+/* 글자들을 상자 안 바닥에 내려놓음 */
+body.fullscreen-mode #title,
+body.fullscreen-mode #artist {
+    position: static !important;
+    transform: none !important;
+    left: auto !important;
+    top: auto !important;
+    margin: 0 !important;
+}
+
+body.fullscreen-mode #title {
+    font-size: 32px !important;
+    font-weight: 800 !important;
+    line-height: 1.3 !important;
+    margin-bottom: 8px !important;
+    display: -webkit-box !important;
+    -webkit-line-clamp: 2 !important;
+    -webkit-box-orient: vertical !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: normal !important;
+}
+
+body.fullscreen-mode #artist {
+    font-size: 22px !important;
+    opacity: 0.7 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+}
+
+/* ─── 좌측: 동적 밀림 UI (제목 길이에 따라 --ti-h 만큼 밀려남) ─── */
+body.fullscreen-mode #controls,
+body.fullscreen-mode .controls,
+body.fullscreen-mode .media-controls {
+    position: fixed !important;
+    left: 10vw !important;
+    top: calc(15vh + 45vh + 30px + var(--ti-h, 75px) + 35px) !important;
+    width: 45vh !important;
+    min-width: 300px !important;
+    display: flex !important;
+    flex-direction: row !important;
+    justify-content: center !important;
+    align-items: center !important;
+    gap: 30px !important;
+    transform: scale(1.5) !important;
+    transform-origin: center center !important;
+    z-index: 9999 !important;
+}
+
+body.fullscreen-mode #progress-container,
+body.fullscreen-mode #progress-bar,
+body.fullscreen-mode .progress-wrapper {
+    position: fixed !important;
+    left: 10vw !important;
+    top: calc(15vh + 45vh + 30px + var(--ti-h, 75px) + 115px) !important;
+    width: 45vh !important;
+    min-width: 300px !important;
+    background-color: rgba(255, 255, 255, 0.15) !important;
+    border-radius: 10px !important;
+    height: 6px !important;
+    z-index: 9999 !important;
+    margin: 0 !important;
+}
+
+body.fullscreen-mode #progress-fill,
+body.fullscreen-mode .progress-fill {
+    background-color: #ffffff !important;
+    box-shadow: 0 0 10px rgba(255, 255, 255, 0.8), 0 0 20px rgba(255, 255, 255, 0.5) !important;
+    border-radius: 10px !important;
+    height: 100% !important;
+    transition: width 0.1s linear !important;
+}
+
+body.fullscreen-mode #equalizer {
+    position: fixed !important;
+    left: calc(10vw + 45vh - 50px) !important;
+    top: calc(15vh + 45vh + 30px + var(--ti-h, 75px) - 28px) !important;
+    transform: scale(1.5) !important;
+    z-index: 9999 !important;
+}
+
+body.fullscreen-mode #equalizer .bar {
+    background-color: #ffffff !important;
+    box-shadow: 0 0 10px rgba(255, 255, 255, 0.8) !important;
+}
+
+/* ─── 우측: 세로형 대형 가사 ─── */
+body.fullscreen-mode #lyrics-container {
+    position: absolute !important;
+    left: auto !important;
+    right: 10vw !important;
+    width: 40vw !important;
+    height: 80vh !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+    align-items: flex-start !important;
+    overflow: visible !important;
+    -webkit-mask-image: none !important;
+    mask-image: none !important;
+}
+
+body.fullscreen-mode #prev-lyric,
+body.fullscreen-mode #current-lyric,
+body.fullscreen-mode #next-lyric {
+    position: static !important;
+    left: auto !important;
+    text-align: left !important;
+    white-space: normal !important;
+    width: 100% !important;
+    margin: 15px 0 !important;
+    text-shadow: none !important;
+    transition: opacity 0.3s ease-in-out, font-size 0.3s ease-in-out, transform 0.3s ease-in-out !important;
+    transform-origin: left center !important;
+}
+
+body.fullscreen-mode #prev-lyric {
+    font-size: 32px !important;
+    opacity: 0.3;
+    transform: translateY(-5px) !important;
+}
+
+body.fullscreen-mode #current-lyric {
+    font-size: 48px !important;
+    font-weight: 900 !important;
+    opacity: 1;
+    transform: scale(1.02) !important;
+}
+
+body.fullscreen-mode #next-lyric {
+    font-size: 32px !important;
+    opacity: 0.3;
+    transform: translateY(5px) !important;
+}
+
+/* 방해 UI 숨기기 */
+body.fullscreen-mode .drag-region {
+    display: none !important;
+}
+
+body.fullscreen-mode #btn-fullscreen {
+    display: none !important;
 }
