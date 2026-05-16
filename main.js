@@ -6,13 +6,13 @@ const fs = require('fs');
 const configPath = path.join(app.getPath('userData'), 'config.json');
 
 function loadConfig() {
-    // 1. userData에 저장된 설정 우선 로드[cite: 8]
+    // 1. userData에 저장된 설정 우선 로드
     if (fs.existsSync(configPath)) {
         const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
         Object.assign(process.env, config);
         return true;
     }
-    // 2. 개발 환경 fallback: 프로젝트 루트 .env[cite: 8]
+    // 2. 개발 환경 fallback: 프로젝트 루트 .env
     if (!app.isPackaged) {
         const envPath = path.join(__dirname, '.env');
         if (fs.existsSync(envPath)) {
@@ -32,14 +32,13 @@ function saveConfig(clientId, clientSecret) {
     };
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-    Object.assign(process.env, config); // 현재 프로세스 환경변수 업데이트[cite: 8]
+    Object.assign(process.env, config); // 현재 프로세스 환경변수 업데이트
 }
 
 // ─── 전역 창 참조 및 상태 ────────────────────────────────
 let win;
 let tray = null;
 let setupWindow = null;
-let isAlwaysOnTopConfig = true;
 let currentIconStyle = 'player';
 let currentWidgetStyle = 'eq';
 
@@ -62,7 +61,7 @@ app.whenReady().then(() => {
         y: height - barHeight - 4,
         frame: false,
         transparent: true,
-        alwaysOnTop: true,
+        alwaysOnTop: true, // 🚨 앱 켜질 때 기본 위젯 모드이므로 항상 위 활성화
         visibleOnAllWorkspaces: true,
         skipTaskbar: true,
         resizable: true,
@@ -78,7 +77,7 @@ app.whenReady().then(() => {
     win.setAlwaysOnTop(true, 'screen-saver');
     win.loadFile('renderer/index.html');
 
-    // F11 전체화면 버그 방지[cite: 7]
+    // F11 전체화면 버그 방지
     win.webContents.on('before-input-event', (event, input) => {
         if (input.key === 'F11') event.preventDefault();
     });
@@ -120,6 +119,7 @@ app.whenReady().then(() => {
                 click: () => {
                     if (!win.isVisible()) win.show();
                     win.focus();
+                    // 강제로 최상단으로 한 번 끌어올린 뒤, 설정창 조작을 위해 항상 위 해제
                     win.setAlwaysOnTop(true, 'screen-saver');
                     win.setAlwaysOnTop(false);
 
@@ -176,10 +176,8 @@ app.whenReady().then(() => {
 
     // ─── 6. IPC 통신 (설정 및 창 제어) ────────────────────
     ipcMain.on('update-system-settings', (event, settings) => {
-        isAlwaysOnTopConfig = settings.alwaysOnTop;
-        if (win && !win.isDestroyed()) {
-            win.setAlwaysOnTop(settings.alwaysOnTop, 'screen-saver');
-        }
+        // 🚨 설정 창에서 변경사항이 들어오더라도 항상 위 여부를 변경하지 않음 (설정창/전체화면 간섭 방지)
+
         if (settings.globalShortcut) {
             if (!globalShortcut.isRegistered('CommandOrControl+Shift+Space')) {
                 globalShortcut.register('CommandOrControl+Shift+Space', () => {
@@ -196,7 +194,8 @@ app.whenReady().then(() => {
 
     ipcMain.on('close-settings', () => {
         setWindowMode(currentWidgetStyle);
-        if (win && !win.isDestroyed()) win.setAlwaysOnTop(isAlwaysOnTopConfig, 'screen-saver');
+        // 🚨 설정 창이 닫히고 위젯 모드로 돌아오면 무조건 항상 위(Always On Top) 활성화
+        if (win && !win.isDestroyed()) win.setAlwaysOnTop(true, 'screen-saver');
         win.webContents.send('show-widget-after-settings');
     });
 
@@ -220,7 +219,6 @@ app.whenReady().then(() => {
         setupWindow.on('closed', () => { setupWindow = null; });
     });
 
-    // setup 창에서 자격증명 제출 시
     ipcMain.on('setup-submit', (event, { clientId, clientSecret }) => {
         const cleanId = clientId.trim();
         const cleanSecret = clientSecret.trim();
@@ -231,7 +229,6 @@ app.whenReady().then(() => {
         shell.openExternal('http://127.0.0.1:8888/login');
     });
 
-    // Spotify 개발자 대시보드 열기[cite: 8]
     ipcMain.on('open-spotify-dashboard', () => {
         shell.openExternal('https://developer.spotify.com/dashboard');
     });
@@ -239,18 +236,19 @@ app.whenReady().then(() => {
     win.setResizable(false);
 });
 
+// ─── 전체 화면 제어 통신 ────────────────────────────────
 ipcMain.on('toggle-fullscreen', (event, isFullscreen) => {
-    const win = require('electron').BrowserWindow.getFocusedWindow();
-    if (!win) return;
+    // 🚨 포커스 된 창을 찾는 방식에서 전역 상태인 win을 직접 참조하도록 안정성 강화
+    if (!win || win.isDestroyed()) return;
 
     if (isFullscreen) {
-        // 전체화면 켜기 (모니터 꽉 채움)
+        // 🚨 전체화면 켜기: 항상 위 옵션을 강제로 해제하고 꽉 채움
+        win.setAlwaysOnTop(false);
         win.setFullScreen(true);
-        win.setAlwaysOnTop(false); // 전체화면일 땐 항상 위 옵션 해제 (선택사항)
     } else {
-        // 전체화면 끄기 (원래 위젯 크기로 복귀)
+        // 🚨 전체화면 끄기: 전체화면을 풀고 무조건 항상 위 옵션 재활성화
         win.setFullScreen(false);
-        // win.setSize(800, 100); // 원래 위젯 사이즈가 있다면 지정해주세요
+        win.setAlwaysOnTop(true, 'screen-saver');
     }
 });
 
@@ -260,5 +258,5 @@ app.on('will-quit', () => {
 });
 
 app.on('window-all-closed', (e) => {
-    e.preventDefault(); // 트레이 백그라운드 유지를 위해 바로 종료되지 않게 할 수도 있습니다.
+    e.preventDefault();
 });

@@ -112,6 +112,22 @@ function applyGradient(imgEl) {
     if (titleEl) titleEl.style.color = isLight ? '#000' : '#fff';
     if (artistEl) artistEl.style.color = isLight ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.5)';
 
+    if (isLight) {
+        document.documentElement.style.setProperty('--ui-primary', '#000000');
+        document.documentElement.style.setProperty('--ui-secondary', 'rgba(0, 0, 0, 0.6)');
+        document.documentElement.style.setProperty('--ui-lyric-dim', 'rgba(0, 0, 0, 0.3)');
+        document.documentElement.style.setProperty('--ui-glow', 'rgba(0, 0, 0, 0.2)'); // 검은 네온 그림자
+        document.documentElement.style.setProperty('--ui-glow-dim', 'rgba(0, 0, 0, 0.1)');
+        document.documentElement.style.setProperty('--ui-bg', 'rgba(0, 0, 0, 0.15)');
+    } else {
+        document.documentElement.style.setProperty('--ui-primary', '#ffffff');
+        document.documentElement.style.setProperty('--ui-secondary', 'rgba(255, 255, 255, 0.6)');
+        document.documentElement.style.setProperty('--ui-lyric-dim', 'rgba(255, 255, 255, 0.25)');
+        document.documentElement.style.setProperty('--ui-glow', 'rgba(255, 255, 255, 0.8)'); // 하얀 네온 그림자
+        document.documentElement.style.setProperty('--ui-glow-dim', 'rgba(255, 255, 255, 0.5)');
+        document.documentElement.style.setProperty('--ui-bg', 'rgba(255, 255, 255, 0.15)');
+    }
+
     document.documentElement.style.setProperty('--theme-color', `rgb(${color})`);
     document.documentElement.style.setProperty('--bg-color', `rgb(${color})`);
 }
@@ -156,39 +172,75 @@ function updateLyrics(prev, current, next) {
     const container = document.getElementById('lyrics-container');
     const lpCurrentEl = document.getElementById('lp-current-lyric');
 
-    [prevEl, currentEl, nextEl, lpCurrentEl].forEach(el => { if (el) el.style.opacity = '0'; });
+    const isFull = document.body.classList.contains('fullscreen-mode');
 
+    // 1. 가사 투명도를 0으로 만들면서 동시에 위로 살짝(-25px) 올려줍니다 (Fade Out & Slide Up)
+    [prevEl, currentEl, nextEl].forEach(el => {
+        if (el) {
+            el.style.setProperty('opacity', '0', 'important');
+            if (isFull) {
+                const base = el.id === 'current-lyric' ? 'scale(1.02)' :
+                    el.id === 'prev-lyric' ? 'translateY(-5px)' : 'translateY(5px)';
+                el.style.setProperty('transform', `${base} translateY(-25px)`, 'important');
+            }
+        }
+    });
+    if (lpCurrentEl) lpCurrentEl.style.opacity = '0';
+
+    // 2. 투명해져서 안 보이는 찰나(250ms 후)에 글자를 교체합니다.
     setTimeout(() => {
         if (prevEl) prevEl.textContent = prev;
         if (currentEl) currentEl.textContent = current;
         if (nextEl) nextEl.textContent = next;
         if (lpCurrentEl) lpCurrentEl.textContent = current;
 
-        requestAnimationFrame(() => {
-            const isFull = document.body.classList.contains('fullscreen-mode');
-
-            if (!isFull) {
-                if (container && currentEl && prevEl && nextEl) {
-                    const containerCenter = container.offsetWidth / 2;
-                    const currentHalf = currentEl.offsetWidth / 2;
-                    const gap = 32;
-                    prevEl.style.left = (containerCenter - currentHalf - gap - prevEl.offsetWidth) + 'px';
-                    nextEl.style.left = (containerCenter + currentHalf + gap) + 'px';
+        if (isFull) {
+            // 3. 애니메이션을 강제로 끄고 몰래 밑(+25px)으로 순간이동 시킵니다.
+            [prevEl, currentEl, nextEl].forEach(el => {
+                if (el) {
+                    el.style.setProperty('transition', 'none', 'important');
+                    const base = el.id === 'current-lyric' ? 'scale(1.02)' :
+                        el.id === 'prev-lyric' ? 'translateY(-5px)' : 'translateY(5px)';
+                    el.style.setProperty('transform', `${base} translateY(25px)`, 'important');
                 }
-            } else {
-                if (prevEl) prevEl.style.left = '';
-                if (nextEl) nextEl.style.left = '';
-            }
+            });
 
-            if (prevEl) prevEl.style.opacity = isFull ? '' : '1';
-            if (currentEl) currentEl.style.opacity = isFull ? '' : '1';
-            if (nextEl) nextEl.style.opacity = isFull ? '' : '1';
-            if (lpCurrentEl) lpCurrentEl.style.opacity = '1';
-        });
+            // 브라우저에게 "지금 위치 바뀌었으니 빨리 계산해!"라고 도장을 찍습니다 (Reflow)
+            void container.offsetHeight;
+
+            // 4. 🚨 핵심 해결책: 브라우저가 화면에 순간이동을 그릴 수 있도록 아주 짧은 시간(20ms)을 줍니다.
+            setTimeout(() => {
+                [prevEl, currentEl, nextEl].forEach(el => {
+                    if (el) {
+                        // 다시 애니메이션을 켜고 제자리(CSS 기본값)로 스르륵 올려줍니다.
+                        el.style.removeProperty('transition');
+                        el.style.removeProperty('transform');
+                        el.style.removeProperty('opacity');
+                    }
+                });
+            }, 20);
+
+        } else {
+            // 위젯 모드일 때만 가로 중앙 정렬 계산 (기존 유지)
+            if (container && currentEl && prevEl && nextEl) {
+                const containerCenter = container.offsetWidth / 2;
+                const currentHalf = currentEl.offsetWidth / 2;
+                const gap = 32;
+                prevEl.style.left = (containerCenter - currentHalf - gap - prevEl.offsetWidth) + 'px';
+                nextEl.style.left = (containerCenter + currentHalf + gap) + 'px';
+            }
+            [prevEl, currentEl, nextEl].forEach(el => {
+                if (el) el.style.setProperty('opacity', '1', 'important');
+            });
+        }
+
+        if (lpCurrentEl) lpCurrentEl.style.opacity = '1';
+
     }, 250);
 }
 
-async function fetchLyrics(title, artist, album, retryCount = 0) {
+// 🚨 매개변수에 videoId를 추가 (기본값 null)
+async function fetchLyrics(title, artist, album, videoId = null, retryCount = 0) {
     if (title !== lastTitle || artist !== lastArtist) return;
 
     if (retryCount === 0) {
@@ -197,19 +249,27 @@ async function fetchLyrics(title, artist, album, retryCount = 0) {
     }
 
     try {
-        const res = await fetch(`http://127.0.0.1:8888/lyrics?title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}&album=${encodeURIComponent(album)}`).then(r => r.json());
+        // 🚨 1. URL 조립: videoId가 있으면 주소 끝에 붙여줍니다.
+        let url = `http://127.0.0.1:8888/lyrics?title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}&album=${encodeURIComponent(album)}`;
+        if (videoId) {
+            url += `&videoId=${encodeURIComponent(videoId)}`;
+        }
+
+        const res = await fetch(url).then(r => r.json());
         if (title !== lastTitle || artist !== lastArtist) return;
 
         currentLyrics = res.lyrics ? parseLRC(res.lyrics) : [];
         if (currentLyrics.length > 0) {
             lastLyricIdx = -1;
         } else {
-            if (retryCount < 2) { setTimeout(() => fetchLyrics(title, artist, album, retryCount + 1), 2000); return; }
+            // 🚨 2. 재시도할 때도 videoId를 잊지 않고 넘겨줍니다.
+            if (retryCount < 2) { setTimeout(() => fetchLyrics(title, artist, album, videoId, retryCount + 1), 2000); return; }
             updateLyrics('', '가사 없음', '');
         }
     } catch (e) {
         if (title !== lastTitle || artist !== lastArtist) return;
-        if (retryCount < 2) { setTimeout(() => fetchLyrics(title, artist, album, retryCount + 1), 2000); return; }
+        // 🚨 3. 에러로 인한 재시도 시에도 videoId를 넘겨줍니다.
+        if (retryCount < 2) { setTimeout(() => fetchLyrics(title, artist, album, videoId, retryCount + 1), 2000); return; }
         updateLyrics('', '가사 없음', '');
     } finally {
         isFetchingLyrics = false;
@@ -229,6 +289,8 @@ if (btnFullscreen) {
 }
 
 document.addEventListener('dblclick', (e) => {
+    if (document.getElementById('settings-modal')?.classList.contains('show')) return;
+
     if (e.target.closest('.controls, .setting-item, #lyrics-container, #track-info, #btn-fullscreen')) return;
     toggleFullscreen();
 });
@@ -289,9 +351,13 @@ async function syncWithServer() {
             return;
         }
 
-        // 🚨 이퀄라이저 생존 확인: 재생 중인데 꺼져있으면 다시 살림
-        if (appConfig.musicService === 'youtube' && !wsClient) {
-            startEQ();
+        // 🚨 이퀄라이저 생존 정밀 확인: 단순히 변수 유무가 아니라 실제 연결 상태(OPEN)까지 체크
+        if (appConfig.musicService === 'youtube') {
+            if (!wsClient || wsClient.readyState !== WebSocket.OPEN) {
+                startEQ();
+            }
+        } else {
+            stopEQ(); // 스포티파이 모드일 때는 확실하게 꺼줌
         }
 
         document.getElementById('btn-play-pause').textContent = '⏸';
@@ -303,11 +369,17 @@ async function syncWithServer() {
         const isSongChanged = track.title !== lastTitle;
         const isArtistChanged = track.artist !== lastArtist;
 
-        // 2. 곡 변경 처리 및 배경색 초기화
+        // 2. 곡 변경 처리 및 UI 초기화
         if (track.title && track.title !== 'YouTube Music' && (isSongChanged || isArtistChanged)) {
-            // 🚨 배경색 즉시 어두운 회색으로 리셋 (하얀색 튐 방지)
+            // 다이내믹 UI 컬러 초기화 (하얀색 튐 방지 및 기본 다크모드)
             document.documentElement.style.setProperty('--bg-color', '#1a1a1a');
             document.documentElement.style.setProperty('--theme-color', '#ffffff');
+            document.documentElement.style.setProperty('--ui-primary', '#ffffff');
+            document.documentElement.style.setProperty('--ui-secondary', 'rgba(255, 255, 255, 0.6)');
+            document.documentElement.style.setProperty('--ui-lyric-dim', 'rgba(255, 255, 255, 0.25)');
+            document.documentElement.style.setProperty('--ui-glow', 'rgba(255, 255, 255, 0.8)');
+            document.documentElement.style.setProperty('--ui-glow-dim', 'rgba(255, 255, 255, 0.5)');
+            document.documentElement.style.setProperty('--ui-bg', 'rgba(255, 255, 255, 0.15)');
 
             if (!isSongChanged && isArtistChanged && currentLyrics.length > 0) {
                 lastArtist = track.artist;
@@ -340,7 +412,14 @@ async function syncWithServer() {
                 if (trackInfo && lyricsContainer) { trackInfo.classList.remove('fade'); lyricsContainer.classList.remove('fade'); }
                 if (lpTextInfo) lpTextInfo.classList.remove('fade');
 
-                fetchLyrics(track.title, track.artist, track.album);
+                // 🚨 유튜브 CC 자막 추출용 영상 ID 확보
+                let vid = null;
+                if (track.albumArt && track.albumArt.includes('i.ytimg.com')) {
+                    vid = track.albumArt.match(/\/vi\/([^\/]+)\//)?.[1];
+                }
+
+                // 확보한 영상 ID를 함께 넘겨서 가사(또는 자막) 요청
+                fetchLyrics(track.title, track.artist, track.album, vid);
             }
         } else {
             if (track.progress < localProgress - 2000) lastLyricIdx = -1;
@@ -392,8 +471,10 @@ async function syncWithServer() {
                     albumArtEl.crossOrigin = 'Anonymous';
                     albumArtEl.src = tryUrls[index];
                     albumArtEl.classList.add('visible');
+
                     // 색상 추출 및 배경색 적용
                     setTimeout(() => { try { applyGradient(albumArtEl); } catch (e) { } }, 50);
+
                     if (lpCover) {
                         lpCover.crossOrigin = 'Anonymous';
                         lpCover.src = tryUrls[index];
@@ -410,12 +491,17 @@ async function syncWithServer() {
             loadNextImage(0);
         }
 
-        // 서비스가 유튜브일 경우 이퀄라이저 실행 재확인
-        if (appConfig.musicService === 'youtube' && !wsClient) startEQ();
+        // 마지막으로 이퀄라이저 실행 재확인
+        if (appConfig.musicService === 'youtube') {
+            if (!wsClient || wsClient.readyState !== WebSocket.OPEN) startEQ();
+        }
 
     } catch (e) {
         console.error('동기화 실패:', e);
-        if (appConfig.musicService === 'youtube') startEQ(); // 에러 발생 시 세션 재연결 시도
+        // 에러 발생 시 세션 재연결 시도
+        if (appConfig.musicService === 'youtube') {
+            if (!wsClient || wsClient.readyState !== WebSocket.OPEN) startEQ();
+        }
     }
 }
 
