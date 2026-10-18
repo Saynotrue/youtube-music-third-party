@@ -468,13 +468,21 @@ async function fetchEnglishMetadata(videoId) {
     }
 }
 
+// lrclib에 같은 곡 이름으로 대량 등록된 엉터리 가사 (예: YOASOBI「アイドル」 영어판을 일본어로 받아 적은 가사가 20개 이상 등록되어 정상 가사가 검색 결과에서 밀려남)
+// 해당 가사의 특징적인 줄로 걸러냄
+const VANDALIZED_LYRIC_LINES = [
+    '課す 冥土 よこす 実に上の上',
+    '万事休す ウィットに富む あれマジで',
+];
+const isVandalizedLyrics = (lyrics) => !!lyrics && VANDALIZED_LYRIC_LINES.some(line => lyrics.includes(line));
+
 // lrclib은 과부하(503 ServerOverloaded)나 요청 제한(429)이 수시로 발생하므로 간격을 늘려가며 최대 3번 재시도
 const LRCLIB_RETRY_DELAYS = [1000, 2000, 4000];
 async function searchLrclib(params) {
     for (let attempt = 0; ; attempt++) {
         try {
             const { data } = await axios.get('https://lrclib.net/api/search', { params, timeout: 5000 });
-            return data || [];
+            return (data || []).filter(r => !isVandalizedLyrics(r.syncedLyrics));
         } catch (e) {
             const status = e.response?.status;
             if (attempt < LRCLIB_RETRY_DELAYS.length && (status === 503 || status === 429)) {
@@ -488,7 +496,7 @@ async function searchLrclib(params) {
 
 // ─── 🚨 가사 Fetch (스마트 필터 및 커버 지원) ─────────────────
 app.get('/lyrics', async (req, res) => {
-    const { title, artist, album, videoId } = req.query;
+    const { title = '', artist, album, videoId } = req.query;
 
     // 🚨 1. 가수 이름 정제: " 및 ", " & ", " feat." 등을 잘라내고 메인 가수 1명만 추출!
     let cleanArtist = artist || '';
@@ -575,9 +583,11 @@ app.get('/lyrics', async (req, res) => {
     // 제목이 같아도 가수만 영어 표기가 다른 경우가 있음 (예: Festa! / 아카네 리제 → Festa! / Akane Lize)
     const englishTitle = englishMeta && (normalize(englishMeta.title) !== normalize(title) || normalize(englishMeta.artist) !== normalize(artist))
         ? (parseOriginalSong(englishMeta.title).titles[0] || englishMeta.title) : null;
+    const englishExpect = sungLang || (/[ぁ-ゟァ-ヿ]/.test(cleanTitle) ? 'ja' : null);
     if (englishTitle) {
         console.log(`[가사 검색] 🔤 영어 표기: ${englishTitle} / ${englishMeta.artist}`);
-        if (englishMeta.artist) queries.push([{ track_name: englishTitle, artist_name: englishMeta.artist }, null]);
+        // 영어 제목으로 찾으면 영어판 가사(예: アイドル → Idol)가 걸리므로, 원제가 일본어면 일본어 가사만 채택
+        if (englishMeta.artist) queries.push([{ track_name: englishTitle, artist_name: englishMeta.artist }, englishExpect]);
     }
 
     // 커버 가수 본인 버전이 lrclib에 있으면 지금 재생 중인 음원과 타이밍이 정확히 일치하므로 최우선
@@ -597,7 +607,7 @@ app.get('/lyrics', async (req, res) => {
     queries.push([{ track_name: cleanTitle, artist_name: cleanArtist }, sungLang]);
     for (const t of original.titles) queries.push([{ track_name: t }, sungLang]);
     queries.push([{ track_name: cleanTitle }, sungLang]);
-    if (englishTitle) queries.push([{ track_name: englishTitle }, null]);
+    if (englishTitle) queries.push([{ track_name: englishTitle }, englishExpect]);
 
     // 같은 곡명의 다른 가수 곡(예: ライラック / 美波)을 피하기 위해, 제목에서 알아낸 원곡 가수와 일치하는 결과를 우선
     const knownArtists = [...original.artists, ...coverArtists, englishMeta?.artist || ''].map(normalize).filter(a => a.length >= 2);

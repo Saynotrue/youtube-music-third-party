@@ -275,36 +275,40 @@ function applyEqPalette(img) {
     const bars = document.querySelectorAll('#equalizer .bar');
     if (!bars.length) return;
     let palette;
-    try { palette = extractPalette(img, 4); } catch (e) { return; }
+    // 전체화면 배경과 같은 색을 쓰도록 같은 팔레트에서 뽑음
+    try { palette = extractPalette(img, AmbientPaint.COLOR_COUNT); } catch (e) { return; }
     if (!palette.length) return;
 
-    // 어두운 바 배경에서도 보이도록 밝기/채도 하한을 두고, 색상(hue) 순으로 정렬해 자연스럽게 이어지게 함
-    const stops = palette
-        .map(c => rgbToHsl(...c.split(',').map(Number)))
-        .map(([h, s, l]) => [h, Math.max(s, 0.45), Math.min(Math.max(l, 0.6), 0.8)])
-        .sort((a, b) => a[0] - b[0]);
+    // 어두운 바 배경에서도 보이도록 밝기만 올림 (채도를 억지로 올리면 흰색/회색이 엉뚱한 색으로 바뀜)
+    // 색상(hue) 순으로 정렬해 자연스럽게 이어지게 하고, 무채색(흰색/회색)은 끝에 둠
+    // 어두운 색은 HSL 채도 값이 과장되므로(예: 살짝 붉은 검정 → 채도 50%) 실제 색 진하기(chroma)를 유지하도록 채도를 다시 계산
+    //   (그대로 밝히면 흑백 앨범의 검정이 진한 빨강/분홍 막대가 됨)
+    const colors = palette.map(c => {
+        const rgb = c.split(',').map(Number);
+        const chroma = (Math.max(...rgb) - Math.min(...rgb)) / 255;
+        const [h, , l0] = rgbToHsl(...rgb);
+        const l = Math.min(Math.max(l0, 0.6), 0.8);
+        return { h, s: Math.min(1, chroma / (1 - Math.abs(2 * l - 1))), l, chroma };
+    });
+    const vivid = colors.filter(c => c.chroma >= 0.12).sort((a, b) => a.h - b.h);
+    const neutral = colors.filter(c => c.chroma < 0.12).map(c => ({ ...c, s: 0 }));
+    let stops = [...vivid, ...neutral];
 
-    // 한 계열 색뿐인 앨범(예: 빨강+검정)은 막대가 거의 같은 색이 되므로, 대표 색 주변으로 색상을 넓혀 그라데이션을 만듦
-    const hueSpread = Math.max(...stops.map(st => st[0])) - Math.min(...stops.map(st => st[0]));
-    if (hueSpread < 25) {
-        const [h, sat] = stops.reduce((best, st) => (st[1] > best[1] ? st : best));
-        stops.splice(0, stops.length,
-            [(h - 30 + 360) % 360, sat, 0.62],
-            [h, sat, 0.6],
-            [(h + 30) % 360, sat, 0.7]);
+    // 한 계열 색뿐인 앨범(예: 빨강+검정)은 막대가 거의 같은 색이 되므로, 대표 색의 밝기를 달리해 그라데이션을 만듦
+    const hueSpread = vivid.length ? vivid[vivid.length - 1].h - vivid[0].h : 0;
+    if (vivid.length > 0 && hueSpread < 25) {
+        const { h, s } = vivid.reduce((best, c) => (c.s > best.s ? c : best));
+        stops = [{ h, s, l: 0.72 }, { h, s, l: 0.6 }, ...neutral.slice(0, 1)];
     }
 
+    // 색 사이는 RGB로 보간 (hue로 보간하면 파랑 → 분홍 사이에 앨범에 없는 보라/초록 등이 끼어 무지개처럼 보임)
+    const rgbStops = stops.map(c => hslToRgb(c.h, c.s, c.l));
     bars.forEach((bar, i) => {
-        const pos = bars.length > 1 ? (i / (bars.length - 1)) * (stops.length - 1) : 0;
-        const a = stops[Math.floor(pos)], b = stops[Math.min(Math.ceil(pos), stops.length - 1)];
+        const pos = bars.length > 1 ? (i / (bars.length - 1)) * (rgbStops.length - 1) : 0;
+        const a = rgbStops[Math.floor(pos)], b = rgbStops[Math.min(Math.ceil(pos), rgbStops.length - 1)];
         const t = pos - Math.floor(pos);
-        // hue는 짧은 쪽으로 보간 (예: 350° → 10°는 0°를 지나도록)
-        let dh = b[0] - a[0];
-        if (dh > 180) dh -= 360; else if (dh < -180) dh += 360;
-        const h = (a[0] + dh * t + 360) % 360;
-        const sat = a[1] + (b[1] - a[1]) * t;
-        const light = a[2] + (b[2] - a[2]) * t;
-        bar.style.setProperty('--bar-color', `hsl(${h.toFixed(0)}, ${(sat * 100).toFixed(0)}%, ${(light * 100).toFixed(0)}%)`);
+        const [r, g, bl] = a.map((v, k) => Math.round(v + (b[k] - v) * t));
+        bar.style.setProperty('--bar-color', `rgb(${r}, ${g}, ${bl})`);
     });
 }
 
