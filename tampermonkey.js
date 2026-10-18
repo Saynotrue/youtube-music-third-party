@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Music Ultimate Integration (Ultra Light v7.1)
 // @namespace    http://tampermonkey.net/
-// @version      7.7
+// @version      7.8
 // @author       You
 // @match        https://music.youtube.com/*
 // @grant        none
@@ -247,6 +247,7 @@
     let ws = null;
     let animationFrameId = null;
     let watchdogTimer = null;
+    let audioTicker = null;
 
     const connectWS = () => {
         if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
@@ -314,11 +315,30 @@
                     lastSendTime = now;
                 }
             }, 100);
+
+            // 🚨 오디오 콜백 구동: 윈도우에서 전체화면 위젯이 크롬 창을 가리면 크롬이 페이지를 '숨김'으로 보고
+            //    rAF는 멈추고 타이머(워치독)도 최대 1초 간격으로 늦춤 → EQ가 띄엄띄엄 움직임.
+            //    오디오 처리 콜백은 재생 중이면 창이 가려져도 멈추지 않으므로(1024샘플 ≈ 21ms마다) 여기서도 데이터를 보냄.
+            //    출력 버퍼는 비워 두므로 소리에는 영향 없음.
+            if (audioTicker) { try { audioTicker.disconnect(); } catch (e) { } }
+            try {
+                audioTicker = audioCtx.createScriptProcessor(1024, 1, 1);
+                audioTicker.onaudioprocess = () => {
+                    const now = performance.now();
+                    if (now - lastSendTime >= frameInterval) {
+                        lastSendTime = now;
+                        extractAndSend();
+                    }
+                };
+                analyser.connect(audioTicker);
+                audioTicker.connect(audioCtx.destination);
+            } catch (e) { audioTicker = null; }
         };
 
         ws.onclose = () => {
             if (animationFrameId) cancelAnimationFrame(animationFrameId);
             if (watchdogTimer) clearInterval(watchdogTimer);
+            if (audioTicker) { try { audioTicker.disconnect(); } catch (e) { } audioTicker = null; }
             setTimeout(connectWS, 3000);
         };
         ws.onerror = () => ws.close();
