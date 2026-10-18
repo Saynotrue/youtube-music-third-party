@@ -167,8 +167,8 @@ app.whenReady().then(() => {
             win.setPosition(Math.floor((currentScreen.width - 700) / 2), currentScreen.height - 44 - 4);
             if (win && !win.isDestroyed()) win.webContents.send('change-style', 'eq');
         } else if (mode === 'lp') {
-            win.setSize(320, 320);
-            win.setPosition(Math.floor((currentScreen.width - 320) / 2), currentScreen.height - 320 - 20);
+            win.setSize(320, 360);
+            win.setPosition(Math.floor((currentScreen.width - 320) / 2), currentScreen.height - 360 - 20);
             if (win && !win.isDestroyed()) win.webContents.send('change-style', 'lp');
         }
         win.setResizable(false);

@@ -182,9 +182,10 @@ body {
 #equalizer .bar {
     width: 3px;
     height: 3px;
-    background: var(--theme-color);
+    /* --bar-color: 앨범 아트 색으로 만든 막대별 그라데이션 색 (app.js applyEqPalette) */
+    background: var(--bar-color, var(--theme-color));
     border-radius: 3px !important;
-    box-shadow: 0 0 6px var(--theme-color);
+    box-shadow: 0 0 6px var(--bar-color, var(--theme-color));
     /* 🚨 배경과 그림자 효과에만 transition 적용 */
     transition: background 0.5s ease, box-shadow 0.5s ease;
     will-change: height, transform;
@@ -263,7 +264,7 @@ body {
 ═════════════════════════════════════════════════════════════ */
 #lp-mode {
     width: 320px;
-    height: 320px;
+    height: 360px;
     background: #1a1a1a;
     border-radius: 24px;
     position: absolute;
@@ -287,15 +288,47 @@ body {
     outline: none;
 }
 
+/* LP 물감 배경 (app.js AmbientPaint가 전체화면 배경과 같은 무늬로 그림) */
+#lp-ambient-canvas {
+    position: absolute;
+    inset: -12%;
+    width: 124%;
+    height: 124%;
+    filter: blur(22px) saturate(1.1);
+    z-index: 0;
+}
+
+/* 가수 이름 부근부터 아래로 검은색 */
+.lp-shade {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background: linear-gradient(180deg,
+        rgba(12, 12, 12, 0) 0%,
+        rgba(12, 12, 12, 0) 52%,
+        rgba(12, 12, 12, 0.75) 66%,
+        rgba(12, 12, 12, 0.97) 80%,
+        #0c0c0c 100%);
+}
+
+/* 다크/글래스 테마는 단색 배경 유지 */
+body[data-theme="dark"] #lp-ambient-canvas,
+body[data-theme="glass"] #lp-ambient-canvas {
+    display: none;
+}
+
 .lp-widget-bg {
     width: 100%;
     height: 100%;
-    padding: 20px 16px 12px 16px;
+    padding: 14px 16px 12px 16px;
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: space-between;
+    position: relative;
+    z-index: 1;
 }
 
 .vinyl-record {
@@ -966,6 +999,41 @@ body.fullscreen-mode {
     transition: background 0.8s ease-in-out !important;
 }
 
+/* ─── 🌈 움직이는 배경 (애플 뮤직 스타일) ─── */
+#ambient-bg {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+    background: var(--bg-color, #1a1a1a);
+    transition: background 0.8s ease-in-out;
+}
+
+body.fullscreen-mode #ambient-bg {
+    display: block;
+}
+
+/* 다크/글래스 테마는 단색 배경 유지 */
+body[data-theme="dark"] #ambient-bg,
+body[data-theme="glass"] #ambient-bg {
+    display: none !important;
+}
+
+body.fullscreen-mode #bar-mode {
+    z-index: 1;
+}
+
+/* 저해상도로 그린 물감 무늬를 화면 크기로 늘리고 흐림을 줘 경계를 부드럽게 함 (가장자리 흐림 번짐을 감추려 살짝 크게) */
+#ambient-canvas {
+    position: absolute;
+    inset: -8%;
+    width: 116%;
+    height: 116%;
+    filter: blur(40px) saturate(1.1);
+}
+
 body.fullscreen-mode #bar-mode,
 body.fullscreen-mode #bar {
     background: transparent !important;
@@ -980,13 +1048,15 @@ body.fullscreen-mode #bar {
 
 /* ─── 좌측: 앨범 아트 ─── */
 body.fullscreen-mode #album-art {
+    /* 정사각형 영역(--art-size) 안에서 원본 비율 유지 + 세로 가운데 정렬 (16:9 영상 썸네일이 잘리지 않도록) */
+    --art-size: max(45vh, 300px);
     position: fixed !important;
     left: 10vw !important;
-    top: 15vh !important;
-    width: 45vh !important;
-    height: 45vh !important;
-    min-width: 300px !important;
-    min-height: 300px !important;
+    top: calc(15vh + (var(--art-size) - var(--art-size) / var(--art-ratio, 1)) / 2) !important;
+    width: var(--art-size) !important;
+    height: calc(var(--art-size) / var(--art-ratio, 1)) !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
     border-radius: 16px !important;
     box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3) !important;
 }
@@ -1117,13 +1187,22 @@ body.fullscreen-mode #lyrics-container {
     justify-content: center !important;
     align-items: flex-start !important;
     overflow: visible !important;
-    -webkit-mask-image: none !important;
-    mask-image: none !important;
+    /* 위아래 끝 흐림: 경계 위치(--fade-*)는 맨 위/맨 아래 줄 위치에 맞춰 app.js updateLyricEdgeMask가 설정 */
+    -webkit-mask-image: linear-gradient(to bottom,
+        transparent var(--fade-top-start, 0px), #000 var(--fade-top-end, 15%),
+        #000 var(--fade-bottom-start, 85%), transparent var(--fade-bottom-end, 100%)) !important;
+    mask-image: linear-gradient(to bottom,
+        transparent var(--fade-top-start, 0px), #000 var(--fade-top-end, 15%),
+        #000 var(--fade-bottom-start, 85%), transparent var(--fade-bottom-end, 100%)) !important;
 }
 
+body.fullscreen-mode #prev2-lyric,
 body.fullscreen-mode #prev-lyric,
 body.fullscreen-mode #current-lyric,
-body.fullscreen-mode #next-lyric {
+body.fullscreen-mode #next-lyric,
+body.fullscreen-mode #next2-lyric {
+    /* 빈 줄(곡 시작/끝)도 자리를 유지해 줄 위치와 흐림 경계가 흔들리지 않게 함 */
+    min-height: 1.25em;
     position: static !important;
     left: auto !important;
     text-align: left !important;
@@ -1131,27 +1210,47 @@ body.fullscreen-mode #next-lyric {
     width: 100% !important;
     margin: 15px 0 !important;
     text-shadow: none !important;
-    transition: opacity 0.3s ease-in-out, font-size 0.3s ease-in-out, transform 0.3s ease-in-out !important;
+    transition: opacity 0.3s ease-in-out !important;
     transform-origin: left center !important;
+    /* transform/color는 !important를 쓰지 않음: 가사 스크롤 애니메이션(Web Animations, app.js animateLyricScroll)이 덮어쓸 수 있어야 함 */
+    transform: none;
 }
 
+body.fullscreen-mode #prev2-lyric,
 body.fullscreen-mode #prev-lyric {
     font-size: 32px !important;
-    color: var(--ui-lyric-dim) !important;
-    transform: translateY(-5px) !important;
+    color: var(--ui-lyric-dim);
 }
 
 body.fullscreen-mode #current-lyric {
     font-size: 48px !important;
     font-weight: 900 !important;
-    color: var(--ui-primary) !important;
-    transform: scale(1.02) !important;
+    color: var(--ui-primary);
 }
 
-body.fullscreen-mode #next-lyric {
+body.fullscreen-mode #next-lyric,
+body.fullscreen-mode #next2-lyric {
     font-size: 32px !important;
-    color: var(--ui-lyric-dim) !important;
-    transform: translateY(5px) !important;
+    color: var(--ui-lyric-dim);
+}
+
+/* 앞뒤 두 번째 줄은 전체화면에서만 표시 (바 모드는 가로 배치라 3줄 유지) */
+.edge-lyric {
+    display: none;
+}
+
+body.fullscreen-mode .edge-lyric {
+    display: block;
+}
+
+/* 위로 밀려 사라지는 이전 가사의 복제본 */
+.lyric-ghost {
+    position: fixed;
+    margin: 0;
+    pointer-events: none;
+    white-space: normal;
+    transform-origin: left center;
+    z-index: 2;
 }
 
 /* 방해 UI 숨기기 */
@@ -1161,4 +1260,34 @@ body.fullscreen-mode .drag-region {
 
 body.fullscreen-mode #btn-fullscreen {
     display: none !important;
+}
+/* ↑/↓ 키로 가사 싱크 조절 시 잠깐 표시되는 값 */
+#sync-toast {
+    position: fixed;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%) scale(0.96);
+    padding: 6px 14px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.72);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    z-index: 10000;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+#sync-toast.show {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+}
+
+body.fullscreen-mode #sync-toast {
+    top: auto;
+    bottom: 8vh;
+    font-size: 16px;
+    padding: 10px 20px;
 }

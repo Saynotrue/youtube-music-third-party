@@ -7,6 +7,11 @@
 </head>
 
 <body>
+  <!-- 🌈 전체화면 배경: 앨범 아트 색들이 물감처럼 불규칙한 모양으로 계속 섞임 (app.js AmbientPaint) -->
+  <div id="ambient-bg" aria-hidden="true">
+    <canvas id="ambient-canvas"></canvas>
+  </div>
+
   <!-- 🎵 1. 기존 가사 바 모드 -->
   <div id="bar-mode" class="mode-active">
     <div id="bar">
@@ -16,9 +21,11 @@
         <span id="artist"></span>
       </div>
       <div id="lyrics-container">
+        <span id="prev2-lyric" class="edge-lyric"></span>
         <span id="prev-lyric"></span>
         <span id="current-lyric"></span>
         <span id="next-lyric"></span>
+        <span id="next2-lyric" class="edge-lyric"></span>
       </div>
       <div id="equalizer">
         <div class="bar"></div>
@@ -46,6 +53,9 @@
 
   <!-- 💿 LP 위젯 모드  -->
   <div id="lp-mode">
+    <!-- 물감 배경 + 가수 이름 부근부터 아래로 검은색 그라데이션 -->
+    <canvas id="lp-ambient-canvas" aria-hidden="true"></canvas>
+    <div class="lp-shade" aria-hidden="true"></div>
     <div class="lp-widget-bg">
       <!-- 회전하는 LP판 -->
       <div class="vinyl-record" id="vinyl-record">

@@ -7,6 +7,7 @@ let currentLyrics = [];
 let lastTitle = '';
 let lastArtist = '';
 let isFetchingLyrics = false;
+let lyricsSource = null; // 'youtube' | 'lrclib' | null
 let lastLyricIdx = -1;
 let isPausedDisplayed = false;
 let lastLyricCheckTime = 0;
@@ -71,6 +72,242 @@ function extractColor(imgEl) {
     return `${Math.floor(r / count)}, ${Math.floor(g / count)}, ${Math.floor(b / count)}`;
 }
 
+// 앨범 아트에서 서로 다른 대표 색 여러 개 추출 (많이 쓰인 색 + 채도 높은 색 우선, 비슷한 색은 제외)
+function extractPalette(imgEl, count = 5) {
+    const size = 32;
+    const canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(imgEl, 0, 0, size, size);
+    const data = ctx.getImageData(0, 0, size, size).data;
+
+    const buckets = new Map();
+    for (let i = 0; i < data.length; i += 4) {
+        const r = data[i], g = data[i + 1], b = data[i + 2];
+        const key = (r >> 5) << 6 | (g >> 5) << 3 | (b >> 5);
+        const bucket = buckets.get(key) || { r: 0, g: 0, b: 0, n: 0 };
+        bucket.r += r; bucket.g += g; bucket.b += b; bucket.n++;
+        buckets.set(key, bucket);
+    }
+
+    const candidates = [...buckets.values()].map(({ r, g, b, n }) => {
+        const c = [r / n, g / n, b / n];
+        const max = Math.max(...c), min = Math.min(...c);
+        const saturation = max === 0 ? 0 : (max - min) / max;
+        return { c, score: n * (0.4 + saturation) };
+    }).sort((a, b) => b.score - a.score);
+
+    const picked = [];
+    const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+    for (const { c } of candidates) {
+        if (picked.every(p => distance(p, c) > 48)) picked.push(c);
+        if (picked.length >= count) break;
+    }
+    // 색이 단조로운 이미지는 밝기만 바꾼 변형으로 채움
+    for (let i = 0; picked.length < count && picked.length > 0; i++) {
+        const base = picked[i % picked.length];
+        const k = i % 2 === 0 ? 0.7 : 1.25;
+        picked.push(base.map(v => Math.min(255, v * k)));
+    }
+    return picked.map(c => c.map(Math.round).join(', '));
+}
+
+// isLight: 글자가 검정(true)/흰색(false)인지. 색 덩어리가 글자 뒤를 지나가도 읽히도록 밝기 범위를 제한
+//  (예: 빨간 앨범의 흰색 로고 색이 흰 글자 뒤로 오면 글자가 사라짐)
+function applyAmbientBackground(img, isLight) {
+    let palette;
+    try { palette = extractPalette(img, AmbientPaint.COLOR_COUNT); } catch (e) { return; }
+    if (!palette.length) return;
+    AmbientPaint.setColors(palette.map(c => {
+        const [h, sat, l] = rgbToHsl(...c.split(',').map(Number));
+        const light = isLight ? Math.max(l, 0.62) : Math.min(l, 0.42);
+        return hslToRgb(h, sat, light);
+    }));
+}
+
+function hslToRgb(h, s, l) {
+    const k = n => (n + h / 30) % 12;
+    const a = s * Math.min(l, 1 - l);
+    const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+    return [f(0) * 255, f(8) * 255, f(4) * 255];
+}
+
+// ─── 🎨 물감 배경 ───────────────────────────────────────────
+// 색마다 하나씩 매끄러운 3D 노이즈(x, y, 시간)를 두고, 각 지점에서 노이즈 값이 큰 색일수록 많이 섞어 칠함.
+// 좌표를 노이즈로 한 번 더 비틀어(domain warp) 원이 아닌 물감이 휘도는 듯한 불규칙한 영역을 만듦.
+// 곡이 바뀌어도 시간(t)은 계속 흐르므로 모양은 이어지고, 색만 목표 색으로 서서히 바뀜.
+const AmbientPaint = (() => {
+    const COLOR_COUNT = 5;
+    const W = 64, H = 40;            // 저해상도로 그린 뒤 CSS로 늘림 (성능)
+    const SPEED = 0.06;              // 모양이 변하는 속도
+    const SCALE = 1.6;               // 색 영역 크기 (작을수록 큰 덩어리)
+    const SHARPNESS = 6;             // 색 영역 경계 선명도
+    const COLOR_FADE_MS = 1500;      // 곡 전환 시 색이 바뀌는 시간
+    const FRAME_MS = 1000 / 30;
+
+    // 3D 값 노이즈 (부드러운 보간)
+    const perm = new Uint8Array(512);
+    const vals = new Float32Array(256);
+    for (let i = 0; i < 256; i++) { perm[i] = i; vals[i] = Math.random(); }
+    for (let i = 255; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [perm[i], perm[j]] = [perm[j], perm[i]]; }
+    for (let i = 0; i < 256; i++) perm[i + 256] = perm[i];
+    const fade = t => t * t * (3 - 2 * t);
+    const lerp = (a, b, t) => a + (b - a) * t;
+    const v = (x, y, z) => vals[perm[perm[perm[x & 255] + (y & 255)] + (z & 255)]];
+    function noise(x, y, z) {
+        const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+        const xf = fade(x - xi), yf = fade(y - yi), zf = fade(z - zi);
+        return lerp(
+            lerp(lerp(v(xi, yi, zi), v(xi + 1, yi, zi), xf), lerp(v(xi, yi + 1, zi), v(xi + 1, yi + 1, zi), xf), yf),
+            lerp(lerp(v(xi, yi, zi + 1), v(xi + 1, yi, zi + 1), xf), lerp(v(xi, yi + 1, zi + 1), v(xi + 1, yi + 1, zi + 1), xf), yf),
+            zf);
+    }
+
+    // 그릴 대상: 전체화면 배경, LP 위젯 배경 (무늬는 한 번만 계산해 보이는 쪽에만 그림)
+    const TARGETS = [
+        { id: 'ambient-canvas', visible: () => document.body.classList.contains('fullscreen-mode') },
+        { id: 'lp-ambient-canvas', visible: () => !document.body.classList.contains('fullscreen-mode') && !!document.getElementById('lp-mode')?.classList.contains('mode-active') },
+    ];
+    let targets = [], image = null;
+    let current = Array.from({ length: COLOR_COUNT }, () => [26, 26, 26]);
+    let from = current.map(c => [...c]), target = current.map(c => [...c]);
+    let fadeStart = 0;
+    let t = Math.random() * 100;     // 시작 모양도 매번 랜덤
+    let lastFrame = 0, rafId = null;
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    const weights = new Float32Array(COLOR_COUNT);
+
+    function init() {
+        targets = TARGETS.map(tg => ({ ...tg, canvas: document.getElementById(tg.id) })).filter(tg => tg.canvas);
+        if (!targets.length) return false;
+        targets.forEach(tg => { tg.canvas.width = W; tg.canvas.height = H; tg.ctx = tg.canvas.getContext('2d'); });
+        image = targets[0].ctx.createImageData(W, H);
+        return true;
+    }
+
+    function draw() {
+        const data = image.data;
+        const aspect = W / H;
+        for (let y = 0; y < H; y++) {
+            for (let x = 0; x < W; x++) {
+                const nx = (x / W) * SCALE * aspect, ny = (y / H) * SCALE;
+                // domain warp: 좌표를 노이즈로 비틀어 휘도는 물감 무늬
+                const wx = nx + (noise(nx * 1.3, ny * 1.3, t * 0.7 + 50) - 0.5) * 1.8;
+                const wy = ny + (noise(nx * 1.3 + 31, ny * 1.3, t * 0.7 + 80) - 0.5) * 1.8;
+                let sum = 0;
+                for (let i = 0; i < COLOR_COUNT; i++) {
+                    const w = Math.exp(noise(wx + i * 17.3, wy - i * 9.1, t + i * 3.7) * SHARPNESS);
+                    weights[i] = w; sum += w;
+                }
+                let r = 0, g = 0, b = 0;
+                for (let i = 0; i < COLOR_COUNT; i++) {
+                    const k = weights[i] / sum;
+                    r += current[i][0] * k; g += current[i][1] * k; b += current[i][2] * k;
+                }
+                const o = (y * W + x) * 4;
+                data[o] = r; data[o + 1] = g; data[o + 2] = b; data[o + 3] = 255;
+            }
+        }
+        targets.forEach(tg => { if (tg.visible()) tg.ctx.putImageData(image, 0, 0); });
+    }
+
+    function updateColors(now) {
+        const k = Math.min(1, (now - fadeStart) / COLOR_FADE_MS);
+        const e = k * k * (3 - 2 * k);
+        current = from.map((c, i) => c.map((ch, j) => ch + (target[i][j] - ch) * e));
+        return k < 1;
+    }
+
+    function isVisible() {
+        return targets.some(tg => tg.visible() && tg.canvas.offsetParent !== null);
+    }
+
+    function loop(now) {
+        rafId = null;
+        if (!isVisible()) return; // 전체화면/LP 모드가 아니면 멈춤 (start()로 재개)
+        if (now - lastFrame >= FRAME_MS) {
+            const dt = lastFrame ? Math.min(now - lastFrame, 100) : FRAME_MS;
+            lastFrame = now;
+            const fading = updateColors(now);
+            if (!reduceMotion) t += SPEED * dt / 1000;
+            draw();
+            if (reduceMotion && !fading) return; // 동작 줄이기: 색 전환이 끝나면 정지
+        }
+        rafId = requestAnimationFrame(loop);
+    }
+
+    function start() {
+        if (!targets.length && !init()) return;
+        if (rafId === null) { lastFrame = 0; rafId = requestAnimationFrame(loop); }
+    }
+
+    function setColors(colors) {
+        if (!colors.length) return;
+        from = current.map(c => [...c]);
+        target = Array.from({ length: COLOR_COUNT }, (_, i) => colors[i % colors.length]);
+        fadeStart = performance.now();
+        start();
+    }
+
+    // 전체화면 진입 감지 → 그리기 재개
+    // 전체화면 진입 / LP 모드 전환 감지 → 그리기 재개
+    const observer = new MutationObserver(() => { if (TARGETS.some(tg => tg.visible())) start(); });
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    const lpModeEl = document.getElementById('lp-mode');
+    if (lpModeEl) observer.observe(lpModeEl, { attributes: true, attributeFilter: ['class'] });
+
+    return { COLOR_COUNT, setColors, start };
+})();
+
+// 바 모드 이퀄라이저: 앨범 아트의 여러 색을 막대마다 이어지는 그라데이션으로 칠함
+function rgbToHsl(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    const l = (max + min) / 2;
+    if (max === min) return [0, 0, l];
+    const d = max - min;
+    const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    const h = max === r ? (g - b) / d + (g < b ? 6 : 0) : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return [h * 60, s, l];
+}
+
+function applyEqPalette(img) {
+    const bars = document.querySelectorAll('#equalizer .bar');
+    if (!bars.length) return;
+    let palette;
+    try { palette = extractPalette(img, 4); } catch (e) { return; }
+    if (!palette.length) return;
+
+    // 어두운 바 배경에서도 보이도록 밝기/채도 하한을 두고, 색상(hue) 순으로 정렬해 자연스럽게 이어지게 함
+    const stops = palette
+        .map(c => rgbToHsl(...c.split(',').map(Number)))
+        .map(([h, s, l]) => [h, Math.max(s, 0.45), Math.min(Math.max(l, 0.6), 0.8)])
+        .sort((a, b) => a[0] - b[0]);
+
+    // 한 계열 색뿐인 앨범(예: 빨강+검정)은 막대가 거의 같은 색이 되므로, 대표 색 주변으로 색상을 넓혀 그라데이션을 만듦
+    const hueSpread = Math.max(...stops.map(st => st[0])) - Math.min(...stops.map(st => st[0]));
+    if (hueSpread < 25) {
+        const [h, sat] = stops.reduce((best, st) => (st[1] > best[1] ? st : best));
+        stops.splice(0, stops.length,
+            [(h - 30 + 360) % 360, sat, 0.62],
+            [h, sat, 0.6],
+            [(h + 30) % 360, sat, 0.7]);
+    }
+
+    bars.forEach((bar, i) => {
+        const pos = bars.length > 1 ? (i / (bars.length - 1)) * (stops.length - 1) : 0;
+        const a = stops[Math.floor(pos)], b = stops[Math.min(Math.ceil(pos), stops.length - 1)];
+        const t = pos - Math.floor(pos);
+        // hue는 짧은 쪽으로 보간 (예: 350° → 10°는 0°를 지나도록)
+        let dh = b[0] - a[0];
+        if (dh > 180) dh -= 360; else if (dh < -180) dh += 360;
+        const h = (a[0] + dh * t + 360) % 360;
+        const sat = a[1] + (b[1] - a[1]) * t;
+        const light = a[2] + (b[2] - a[2]) * t;
+        bar.style.setProperty('--bar-color', `hsl(${h.toFixed(0)}, ${(sat * 100).toFixed(0)}%, ${(light * 100).toFixed(0)}%)`);
+    });
+}
+
 function applyGradient(imgEl) {
     if (imgEl) lastAlbumImg = imgEl;
     const img = lastAlbumImg;
@@ -80,6 +317,8 @@ function applyGradient(imgEl) {
     const lpMode = document.getElementById('lp-mode');
     const titleEl = document.getElementById('title');
     const artistEl = document.getElementById('artist');
+
+    applyEqPalette(img);
 
     if (appConfig.theme === 'dark') {
         if (bar) { bar.style.background = 'rgba(15, 15, 15, 0.95)'; bar.style.backdropFilter = ''; }
@@ -101,12 +340,14 @@ function applyGradient(imgEl) {
     const [r, g, b] = color.split(',').map(Number);
     const brightness = (r * 299 + g * 587 + b * 114) / 1000;
     const isLight = brightness > 128;
+    applyAmbientBackground(img, isLight);
 
     if (appConfig.theme === 'accent') {
         if (bar) bar.style.background = `linear-gradient(90deg, rgba(${color}, 1.0) 0%, rgba(${color}, 0.85) 45%, rgba(${color}, 0.2) 100%)`;
     } else {
         if (bar) bar.style.background = `linear-gradient(90deg, rgba(${color}, 0.9) 0%, rgba(${color}, 0.5) 25%, rgba(15,15,15,0.92) 55%)`;
-        if (lpMode) lpMode.style.background = `linear-gradient(180deg, rgb(${color}) 0%, rgb(35, 35, 35) 75%, rgb(15, 15, 15) 100%)`;
+        // LP 배경은 물감 캔버스(#lp-ambient-canvas)가 그림. 캔버스가 꺼진 테마용 바탕색만 지정
+        if (lpMode) lpMode.style.background = `rgb(${color})`;
     }
 
     if (titleEl) titleEl.style.color = isLight ? '#000' : '#fff';
@@ -158,14 +399,107 @@ function getLyricContext(progress) {
         else break;
     }
     return {
+        prev2: currentLyrics[idx - 2]?.text || '',
         prev: currentLyrics[idx - 1]?.text || '',
         current: currentLyrics[idx]?.text || '',
         next: currentLyrics[idx + 1]?.text || '',
+        next2: currentLyrics[idx + 2]?.text || '',
         idx,
     };
 }
 
-function updateLyrics(prev, current, next) {
+// 전체화면 가사: 한 줄씩 실제로 위로 스크롤 (사라졌다 나타나는 빈 간격 없음)
+//  현재 줄 → 이전 줄 자리로 올라가며 작고 흐려지고, 다음 줄 → 현재 줄 자리로 올라오며 커지고 진해짐
+const LYRIC_SCROLL_MS = 590;
+// 천천히 시작해 천천히 멈추는 곡선 (초반에 확 튀어나가지 않도록)
+const LYRIC_SCROLL_EASING = 'cubic-bezier(0.33, 0.5, 0.2, 1)';
+// 사라지는 이전 줄/새로 나타나는 다음 줄은 줄 간격의 일부만 움직이며 흐려지고 나타남
+const LYRIC_EDGE_TRAVEL = 0.7;
+
+// els/texts: [이전2, 이전, 현재, 다음, 다음2] 순서
+function animateLyricScroll(els, texts) {
+    els.forEach(el => { el.getAnimations().forEach(a => a.finish()); el.style.removeProperty('opacity'); el.style.removeProperty('transform'); });
+    const container = document.getElementById('lyrics-container');
+    const last = els.length - 1;
+
+    const oldTexts = els.map(el => el.textContent);
+    // 한 줄씩 위로 넘어가는 경우만 스크롤 (현재 → 이전, 다음 → 현재)
+    const isStep = !!oldTexts[2] && texts[1] === oldTexts[2] && texts[2] === oldTexts[3];
+
+    if (!isStep) {
+        // 곡 변경/탐색 등: 짧게 겹쳐 바뀌는 페이드 (빈 간격 없음)
+        els.forEach((el, i) => { el.textContent = texts[i]; });
+        updateLyricEdgeMask(container, els);
+        els.forEach(el => el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 285, easing: 'ease-out' }));
+        return;
+    }
+
+    // 자리(slot)별 위치·글자 크기·색 (교체 전에 측정)
+    const oldRects = els.map(el => el.getBoundingClientRect());
+    const styles = els.map(el => getComputedStyle(el));
+    const sizes = styles.map(st => parseFloat(st.fontSize));
+    const colors = styles.map(st => st.color);
+
+    // 맨 위 줄: 복제본을 그 자리에 두고 위로 밀어 올리며 사라지게 함
+    if (oldTexts[0]) {
+        const ghost = els[0].cloneNode(true);
+        ghost.removeAttribute('id');
+        ghost.className = 'lyric-ghost';
+        Object.assign(ghost.style, {
+            left: `${oldRects[0].left}px`, top: `${oldRects[0].top}px`, width: `${oldRects[0].width}px`,
+            fontSize: styles[0].fontSize, fontWeight: styles[0].fontWeight, fontFamily: styles[0].fontFamily,
+            lineHeight: styles[0].lineHeight, color: colors[0], textAlign: styles[0].textAlign,
+        });
+        document.body.appendChild(ghost);
+        const lift = (oldRects[1].top - oldRects[0].top) * LYRIC_EDGE_TRAVEL;
+        // 가장자리 흐림 영역에 있던 줄이므로 반투명에서 시작
+        ghost.animate(
+            [{ transform: 'translateY(0)', opacity: 0.35 }, { transform: `translateY(${-lift}px)`, opacity: 0 }],
+            { duration: LYRIC_SCROLL_MS, easing: LYRIC_SCROLL_EASING }
+        ).onfinish = () => ghost.remove();
+    }
+
+    els.forEach((el, i) => { el.textContent = texts[i]; });
+    const newRects = els.map(el => el.getBoundingClientRect());
+    updateLyricEdgeMask(container, els);
+
+    // 각 줄은 바로 아래 자리(i+1)의 위치·크기·색에서 출발해 제자리로 올라옴
+    for (let i = 0; i < last; i++) {
+        els[i].animate([
+            { transform: `translateY(${oldRects[i + 1].top - newRects[i].top}px) scale(${sizes[i + 1] / sizes[i]})`, color: colors[i + 1] },
+            { transform: 'none', color: colors[i] },
+        ], { duration: LYRIC_SCROLL_MS, easing: LYRIC_SCROLL_EASING });
+    }
+
+    // 맨 아래 새 줄: 아래에서 올라오며 나타남
+    const rise = (newRects[last].top - newRects[last - 1].top) * LYRIC_EDGE_TRAVEL;
+    els[last].animate([
+        { transform: `translateY(${rise}px)`, opacity: 0 },
+        { transform: 'none', opacity: 1 },
+    ], { duration: LYRIC_SCROLL_MS, easing: LYRIC_SCROLL_EASING });
+}
+
+// 창 크기가 바뀌면 줄 위치가 달라지므로 흐림 경계 다시 계산
+window.addEventListener('resize', () => {
+    if (!document.body.classList.contains('fullscreen-mode')) return;
+    const ids = ['prev2-lyric', 'prev-lyric', 'current-lyric', 'next-lyric', 'next2-lyric'];
+    const els = ids.map(id => document.getElementById(id));
+    if (els.every(Boolean)) updateLyricEdgeMask(document.getElementById('lyrics-container'), els);
+});
+
+// 가사 창 위아래 끝 흐림: 맨 위/맨 아래 줄이 절반쯤만 보이도록 그 줄 위치에 맞춰 마스크 경계를 설정
+function updateLyricEdgeMask(container, els) {
+    if (!container) return;
+    const box = container.getBoundingClientRect();
+    const first = els[0].getBoundingClientRect();
+    const lastRect = els[els.length - 1].getBoundingClientRect();
+    container.style.setProperty('--fade-top-start', `${Math.max(0, first.top - box.top)}px`);
+    container.style.setProperty('--fade-top-end', `${Math.max(0, first.bottom - box.top)}px`);
+    container.style.setProperty('--fade-bottom-start', `${Math.max(0, lastRect.top - box.top)}px`);
+    container.style.setProperty('--fade-bottom-end', `${Math.max(0, lastRect.bottom - box.top)}px`);
+}
+
+function updateLyrics(prev, current, next, prev2 = '', next2 = '') {
     const prevEl = document.getElementById('prev-lyric');
     const currentEl = document.getElementById('current-lyric');
     const nextEl = document.getElementById('next-lyric');
@@ -174,68 +508,50 @@ function updateLyrics(prev, current, next) {
 
     const isFull = document.body.classList.contains('fullscreen-mode');
 
-    // 1. 가사 투명도를 0으로 만들면서 동시에 위로 살짝(-25px) 올려줍니다 (Fade Out & Slide Up)
+    const prev2El = document.getElementById('prev2-lyric');
+    const next2El = document.getElementById('next2-lyric');
+    const fullEls = [prev2El, prevEl, currentEl, nextEl, next2El];
+
+    if (isFull && fullEls.every(Boolean)) {
+        animateLyricScroll(fullEls, [prev2, prev, current, next, next2]);
+        if (lpCurrentEl) lpCurrentEl.textContent = current;
+        return;
+    }
+
+    // 위젯(바) 모드: 짧게 페이드아웃 → 글자 교체 → 가로 중앙 정렬 후 페이드인
     [prevEl, currentEl, nextEl].forEach(el => {
-        if (el) {
-            el.style.setProperty('opacity', '0', 'important');
-            if (isFull) {
-                const base = el.id === 'current-lyric' ? 'scale(1.02)' :
-                    el.id === 'prev-lyric' ? 'translateY(-5px)' : 'translateY(5px)';
-                el.style.setProperty('transform', `${base} translateY(-25px)`, 'important');
-            }
-        }
+        if (el) el.style.setProperty('opacity', '0', 'important');
     });
     if (lpCurrentEl) lpCurrentEl.style.opacity = '0';
 
-    // 2. 투명해져서 안 보이는 찰나(250ms 후)에 글자를 교체합니다.
     setTimeout(() => {
+        // 대기 중 전체화면으로 바뀌었다면 전체화면 방식으로 처리
+        if (document.body.classList.contains('fullscreen-mode') && fullEls.every(Boolean)) {
+            [prevEl, currentEl, nextEl].forEach(el => el.style.removeProperty('opacity'));
+            animateLyricScroll(fullEls, [prev2, prev, current, next, next2]);
+            if (lpCurrentEl) { lpCurrentEl.textContent = current; lpCurrentEl.style.opacity = '1'; }
+            return;
+        }
+
         if (prevEl) prevEl.textContent = prev;
         if (currentEl) currentEl.textContent = current;
         if (nextEl) nextEl.textContent = next;
+        if (prev2El) prev2El.textContent = prev2;
+        if (next2El) next2El.textContent = next2;
         if (lpCurrentEl) lpCurrentEl.textContent = current;
 
-        if (isFull) {
-            // 3. 애니메이션을 강제로 끄고 몰래 밑(+25px)으로 순간이동 시킵니다.
-            [prevEl, currentEl, nextEl].forEach(el => {
-                if (el) {
-                    el.style.setProperty('transition', 'none', 'important');
-                    const base = el.id === 'current-lyric' ? 'scale(1.02)' :
-                        el.id === 'prev-lyric' ? 'translateY(-5px)' : 'translateY(5px)';
-                    el.style.setProperty('transform', `${base} translateY(25px)`, 'important');
-                }
-            });
-
-            // 브라우저에게 "지금 위치 바뀌었으니 빨리 계산해!"라고 도장을 찍습니다 (Reflow)
-            void container.offsetHeight;
-
-            // 4. 🚨 핵심 해결책: 브라우저가 화면에 순간이동을 그릴 수 있도록 아주 짧은 시간(20ms)을 줍니다.
-            setTimeout(() => {
-                [prevEl, currentEl, nextEl].forEach(el => {
-                    if (el) {
-                        // 다시 애니메이션을 켜고 제자리(CSS 기본값)로 스르륵 올려줍니다.
-                        el.style.removeProperty('transition');
-                        el.style.removeProperty('transform');
-                        el.style.removeProperty('opacity');
-                    }
-                });
-            }, 20);
-
-        } else {
-            // 위젯 모드일 때만 가로 중앙 정렬 계산 (기존 유지)
-            if (container && currentEl && prevEl && nextEl) {
-                const containerCenter = container.offsetWidth / 2;
-                const currentHalf = currentEl.offsetWidth / 2;
-                const gap = 32;
-                prevEl.style.left = (containerCenter - currentHalf - gap - prevEl.offsetWidth) + 'px';
-                nextEl.style.left = (containerCenter + currentHalf + gap) + 'px';
-            }
-            [prevEl, currentEl, nextEl].forEach(el => {
-                if (el) el.style.setProperty('opacity', '1', 'important');
-            });
+        if (container && currentEl && prevEl && nextEl) {
+            const containerCenter = container.offsetWidth / 2;
+            const currentHalf = currentEl.offsetWidth / 2;
+            const gap = 32;
+            prevEl.style.left = (containerCenter - currentHalf - gap - prevEl.offsetWidth) + 'px';
+            nextEl.style.left = (containerCenter + currentHalf + gap) + 'px';
         }
+        [prevEl, currentEl, nextEl].forEach(el => {
+            if (el) el.style.setProperty('opacity', '1', 'important');
+        });
 
         if (lpCurrentEl) lpCurrentEl.style.opacity = '1';
-
     }, 250);
 }
 
@@ -259,6 +575,7 @@ async function fetchLyrics(title, artist, album, videoId = null, retryCount = 0)
         if (title !== lastTitle || artist !== lastArtist) return;
 
         currentLyrics = res.lyrics ? parseLRC(res.lyrics) : [];
+        lyricsSource = currentLyrics.length > 0 ? res.source : null;
         if (currentLyrics.length > 0) {
             lastLyricIdx = -1;
         } else {
@@ -274,6 +591,18 @@ async function fetchLyrics(title, artist, album, videoId = null, retryCount = 0)
     } finally {
         isFetchingLyrics = false;
     }
+}
+
+// 외부 가사로 재생 중에 유튜브 자막이 뒤늦게 확보되면(예: CC 켜기) 조용히 교체
+async function upgradeToYtCaptions(title, artist, videoId) {
+    lyricsSource = 'youtube'; // 중복 요청 방지
+    try {
+        const url = `http://127.0.0.1:8888/lyrics?title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}&videoId=${encodeURIComponent(videoId)}`;
+        const res = await fetch(url).then(r => r.json());
+        if (title !== lastTitle || artist !== lastArtist || res.source !== 'youtube') return;
+        const parsed = parseLRC(res.lyrics);
+        if (parsed.length > 0) { currentLyrics = parsed; lastLyricIdx = -1; }
+    } catch (e) { }
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -309,7 +638,31 @@ function toggleFullscreen() {
 
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && isFullscreen) toggleFullscreen();
+
+    // ↑ / ↓: 가사 싱크 ±50ms (↑ = 가사를 더 일찍, ↓ = 더 늦게. 설정 창 싱크 값과 같은 값)
+    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.target.closest?.('input, textarea, select')) {
+        e.preventDefault();
+        appConfig.syncOffset += e.key === 'ArrowUp' ? 50 : -50;
+        saveSettings();
+        applyConfigToUI();
+        showSyncToast();
+    }
 });
+
+let syncToastTimer = null;
+function showSyncToast() {
+    let toast = document.getElementById('sync-toast');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'sync-toast';
+        document.body.appendChild(toast);
+    }
+    const ms = appConfig.syncOffset;
+    toast.textContent = `가사 싱크 ${ms > 0 ? '+' : ''}${ms}ms`;
+    toast.classList.add('show');
+    clearTimeout(syncToastTimer);
+    syncToastTimer = setTimeout(() => toast.classList.remove('show'), 1200);
+}
 
 // 🚨 곡 정보 상자 높이 실시간 추적 (버튼 겹침 완벽 방지)
 function updateTrackHeight() {
@@ -333,6 +686,13 @@ bodyObserver.observe(document.body, { attributes: true, attributeFilter: ['class
 async function syncWithServer() {
     try {
         const track = await fetch('http://127.0.0.1:8888/current-track').then(r => r.json());
+        const fetchedAt = performance.now();
+
+        // 진행 시간은 측정 시점 기준이므로, 그 뒤로 흐른 시간(전송·폴링 지연)만큼 보정
+        if (track.playing && track.sampledAt) {
+            const age = Date.now() - track.sampledAt;
+            if (age > 0 && age < 5000) track.progress += age;
+        }
 
         // 1. 재생 상태 확인 및 이퀄라이저 제어
         if (!track.playing) {
@@ -388,10 +748,17 @@ async function syncWithServer() {
                 if (lpArtist) lpArtist.textContent = track.artist;
             } else {
                 if (isSongChanged) localProgress = track.progress > 5000 ? 0 : track.progress;
+                // 싱크 조절은 곡마다 다르므로 곡이 바뀌면 0으로 초기화
+                if (isSongChanged && appConfig.syncOffset !== 0) {
+                    appConfig.syncOffset = 0;
+                    saveSettings();
+                    applyConfigToUI();
+                }
                 lastTitle = track.title;
                 lastArtist = track.artist;
                 lastLyricIdx = -1;
                 currentLyrics = [];
+                lyricsSource = null;
 
                 const trackInfo = document.getElementById('track-info');
                 const lyricsContainer = document.getElementById('lyrics-container');
@@ -413,8 +780,8 @@ async function syncWithServer() {
                 if (lpTextInfo) lpTextInfo.classList.remove('fade');
 
                 // 🚨 유튜브 CC 자막 추출용 영상 ID 확보
-                let vid = null;
-                if (track.albumArt && track.albumArt.includes('i.ytimg.com')) {
+                let vid = track.videoId || null;
+                if (!vid && track.albumArt && track.albumArt.includes('i.ytimg.com')) {
                     vid = track.albumArt.match(/\/vi\/([^\/]+)\//)?.[1];
                 }
 
@@ -424,9 +791,14 @@ async function syncWithServer() {
         } else {
             if (track.progress < localProgress - 2000) lastLyricIdx = -1;
             localProgress = track.progress;
+
+            if (track.hasYtCaptions && track.videoId && lyricsSource !== 'youtube' && !isFetchingLyrics) {
+                upgradeToYtCaptions(lastTitle, lastArtist, track.videoId);
+            }
         }
 
-        lastSyncTime = performance.now();
+        // 곡 전환 시 페이드(400ms) 대기 시간이 진행 시간에 누락되지 않도록 응답 받은 시점을 기준으로 사용
+        lastSyncTime = fetchedAt;
         isPlaying = true;
         trackDuration = track.duration;
 
@@ -450,45 +822,54 @@ async function syncWithServer() {
             tryUrls.push(originalArt);
         }
 
-        if (originalArt && albumArtEl && albumArtEl.getAttribute('data-src') !== originalArt) {
-            albumArtEl.setAttribute('data-src', originalArt);
-            albumArtEl.classList.remove('visible');
-            if (lpCover) lpCover.classList.add('fade');
+        if (originalArt && albumArtEl) {
+            if (albumArtEl.getAttribute('data-src') !== originalArt) {
 
-            const loadNextImage = (index) => {
-                if (index >= tryUrls.length) return;
-                const tempImg = new Image();
-                tempImg.crossOrigin = 'Anonymous';
+                albumArtEl.setAttribute('data-src', originalArt);
+                albumArtEl.classList.remove('visible');
+                if (lpCover) lpCover.classList.add('fade');
 
-                // ⏱️ 타임아웃: 2.5초 이상 걸리면 다음 화질로 강제 전환
-                const timeoutId = setTimeout(() => {
-                    tempImg.src = "";
-                    loadNextImage(index + 1);
-                }, 2500);
+                const loadNextImage = (index) => {
+                    if (index >= tryUrls.length) return;
+                    const tempImg = new Image();
+                    tempImg.crossOrigin = 'Anonymous';
 
-                tempImg.onload = () => {
-                    clearTimeout(timeoutId);
-                    albumArtEl.crossOrigin = 'Anonymous';
-                    albumArtEl.src = tryUrls[index];
-                    albumArtEl.classList.add('visible');
+                    const timeoutId = setTimeout(() => {
+                        tempImg.src = "";
+                        loadNextImage(index + 1);
+                    }, 2500);
 
-                    // 색상 추출 및 배경색 적용
-                    setTimeout(() => { try { applyGradient(albumArtEl); } catch (e) { } }, 50);
+                    tempImg.onload = () => {
+                        clearTimeout(timeoutId);
+                        // 유튜브 영상 썸네일(16:9)이 정사각형으로 잘리지 않도록 원본 비율 전달 (세로로 긴 이미지는 정사각형 처리)
+                        const ratio = tempImg.naturalWidth / tempImg.naturalHeight;
+                        albumArtEl.style.setProperty('--art-ratio', ratio > 1 ? ratio : 1);
+                        albumArtEl.crossOrigin = 'Anonymous';
+                        albumArtEl.src = tryUrls[index];
+                        albumArtEl.classList.add('visible');
 
-                    if (lpCover) {
-                        lpCover.crossOrigin = 'Anonymous';
-                        lpCover.src = tryUrls[index];
-                        lpCover.classList.remove('fade');
-                    }
+                        setTimeout(() => { try { applyGradient(albumArtEl); } catch (e) { } }, 50);
+
+                        if (lpCover) {
+                            lpCover.crossOrigin = 'Anonymous';
+                            lpCover.src = tryUrls[index];
+                            lpCover.classList.remove('fade');
+                        }
+                    };
+
+                    tempImg.onerror = () => {
+                        clearTimeout(timeoutId);
+                        loadNextImage(index + 1);
+                    };
+                    tempImg.src = tryUrls[index];
                 };
+                loadNextImage(0);
 
-                tempImg.onerror = () => {
-                    clearTimeout(timeoutId);
-                    loadNextImage(index + 1);
-                };
-                tempImg.src = tryUrls[index];
-            };
-            loadNextImage(0);
+            } else if (isSongChanged || isArtistChanged) {
+                setTimeout(() => {
+                    try { applyGradient(albumArtEl); } catch (e) { }
+                }, 50);
+            }
         }
 
         // 마지막으로 이퀄라이저 실행 재확인
@@ -504,6 +885,9 @@ async function syncWithServer() {
         }
     }
 }
+
+// 가사 전환 페이드(250ms)가 끝날 때 가사가 정확히 보이도록 살짝 앞당김
+const LYRIC_LEAD_MS = 300;
 
 function tickProgress() {
     if (!isPlaying || lastSyncTime === null || !trackDuration || trackDuration <= 0) {
@@ -521,8 +905,8 @@ function tickProgress() {
 
     if (currentLyrics.length > 0 && (now - lastLyricCheckTime > 100)) {
         lastLyricCheckTime = now;
-        const { prev, current, next, idx } = getLyricContext(progress + 1000 + appConfig.syncOffset);
-        if (idx !== lastLyricIdx) { lastLyricIdx = idx; updateLyrics(prev, current, next); }
+        const { prev2, prev, current, next, next2, idx } = getLyricContext(progress + LYRIC_LEAD_MS + appConfig.syncOffset);
+        if (idx !== lastLyricIdx) { lastLyricIdx = idx; updateLyrics(prev, current, next, prev2, next2); }
     }
     requestAnimationFrame(tickProgress);
 }

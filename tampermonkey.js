@@ -1,14 +1,93 @@
 // ==UserScript==
 // @name         YouTube Music Ultimate Integration (Ultra Light v7.1)
 // @namespace    http://tampermonkey.net/
-// @version      7.1
+// @version      7.7
 // @author       You
 // @match        https://music.youtube.com/*
 // @grant        none
+// @noframes
+// @run-at       document-start
 // ==/UserScript==
 
 (function () {
     'use strict';
+
+    // =====================================================================
+    // 0. 플레이어가 받은 자막(CC) 가로채기 → LRC 변환 후 서버로 전송
+    //    (자막 조회 자체는 서버가 담당. 페이지에서 직접 요청하면 인증 토큰이 없어 빈 응답이 옴)
+    // =====================================================================
+
+    function msToLrcTag(ms) {
+        const mins = Math.floor(ms / 60000);
+        const secs = ((ms % 60000) / 1000).toFixed(2);
+        return `[${String(mins).padStart(2, '0')}:${secs.padStart(5, '0')}]`;
+    }
+
+    // json3 / srv3(XML) / 구형 XML 자막을 모두 LRC로 변환
+    function captionsToLrc(raw) {
+        const lines = [];
+        const push = (ms, text) => {
+            const clean = (text || '').replace(/\s*\n\s*/g, ' ').trim();
+            if (clean) lines.push(`${msToLrcTag(ms)} ${clean}`);
+        };
+
+        const body = (raw || '').trim();
+        if (!body) return null;
+
+        if (body.startsWith('{')) {
+            const json = JSON.parse(body);
+            for (const ev of json.events || []) {
+                if (!ev.segs) continue;
+                push(ev.tStartMs || 0, ev.segs.map(s => s.utf8 || '').join(''));
+            }
+        } else {
+            const doc = new DOMParser().parseFromString(body, 'text/xml');
+            doc.querySelectorAll('p[t]').forEach(p => push(Number(p.getAttribute('t')), p.textContent));
+            if (lines.length === 0) {
+                doc.querySelectorAll('text[start]').forEach(t => push(parseFloat(t.getAttribute('start')) * 1000, t.textContent));
+            }
+        }
+        return lines.length > 0 ? lines.join('\n') : null;
+    }
+
+    function postCaptions(videoId, lyrics) {
+        fetch("http://127.0.0.1:8888/yt-captions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ videoId, lyrics })
+        }).catch(() => { });
+    }
+
+    // 사용자가 CC를 켜면 플레이어가 받아오는 자막 응답을 가로채서 사용
+    function handleTimedTextResponse(url, raw) {
+        try {
+            const u = new URL(url, location.origin);
+            if (!u.pathname.includes('/api/timedtext') || u.searchParams.get('kind') === 'asr') return;
+            const videoId = u.searchParams.get('v');
+            const lrc = captionsToLrc(raw);
+            if (videoId && lrc) postCaptions(videoId, lrc);
+        } catch (e) { }
+    }
+
+    const origFetch = window.fetch;
+    window.fetch = function (input) {
+        const promise = origFetch.apply(this, arguments);
+        const url = typeof input === 'string' ? input : input?.url;
+        if (url && url.includes('/api/timedtext')) {
+            promise.then(r => r.clone().text()).then(raw => handleTimedTextResponse(url, raw)).catch(() => { });
+        }
+        return promise;
+    };
+
+    const origOpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function (method, url) {
+        if (typeof url === 'string' && url.includes('/api/timedtext')) {
+            this.addEventListener('load', () => {
+                if (this.responseType === '' || this.responseType === 'text') handleTimedTextResponse(url, this.responseText);
+            });
+        }
+        return origOpen.apply(this, arguments);
+    };
 
     function parseTimeToMs(timeStr) {
         if (!timeStr) return 0;
@@ -18,45 +97,77 @@
         return 0;
     }
 
+    // 곡 정보: mediaSession(유튜브 뮤직이 직접 채움) → 플레이어 API → 플레이어 바 DOM 순으로 조회
+    // 🚨 페이지 전체를 대상으로 한 셀렉터(yt-formatted-string.title 등)는 홈 화면 카드 제목을 잘못 집어오므로 사용 금지
+    function getTrackInfo() {
+        const meta = navigator.mediaSession?.metadata;
+        const player = document.getElementById('movie_player');
+        const videoData = player?.getVideoData?.() || {};
+        const bar = document.querySelector('ytmusic-player-bar');
+
+        let title = meta?.title || videoData.title || '';
+        let artist = meta?.artist || videoData.author || '';
+        let album = meta?.album || '';
+        let albumArt = meta?.artwork?.length ? meta.artwork[meta.artwork.length - 1].src : '';
+
+        if (bar) {
+            if (!title) title = bar.querySelector('.content-info-wrapper .title')?.textContent || '';
+            if (!artist) {
+                const parts = (bar.querySelector('.content-info-wrapper .byline')?.textContent || '').split(' • ');
+                artist = parts[0] || '';
+                if (!album) album = parts[1] || '';
+            }
+            if (!albumArt) albumArt = bar.querySelector('.thumbnail-image-wrapper img, img')?.src || '';
+        }
+
+        return { title: title.trim(), artist: artist.trim(), album: album.trim(), albumArt, videoId: videoData.video_id || '' };
+    }
+
     // =====================================================================
     // 1. 상태 및 가사 전송
     // =====================================================================
     setInterval(() => {
         const video = document.querySelector('video.html5-main-video');
-        const titleEl = document.querySelector('ytmusic-player-bar .title') || document.querySelector('yt-formatted-string.title');
-        const bylineEl = document.querySelector('ytmusic-player-bar .byline');
-        const imgEl = document.querySelector('ytmusic-player-bar img');
+        const player = document.getElementById('movie_player');
         const activeLyric = document.querySelector('.ytmusic-player-page .active-lyric');
-        const timeInfoEl = document.querySelector('.time-info.ytmusic-player-bar');
+        const timeInfoEl = document.querySelector('ytmusic-player-bar .time-info');
 
-        if (!titleEl) return;
+        const info = getTrackInfo();
+        if (!info.title) return;
 
-        const parts = (bylineEl ? bylineEl.textContent : '').split(' • ');
-        const artist = parts[0] || '';
-        const album = parts[1] || '';
         const currentLyric = activeLyric ? activeLyric.textContent.trim() : "";
 
         let progress = 0, duration = 0;
-        if (timeInfoEl) {
+        if (player?.getCurrentTime) progress = Math.floor(player.getCurrentTime() * 1000);
+        else if (video) progress = Math.floor(video.currentTime * 1000);
+
+        // 🚨 곡 길이: player.getDuration()은 '지금까지 받아 둔 구간' 길이를 돌려줘 재생 중에 계속 늘어나므로(예: 79초 → 139초, 실제 183초)
+        //    곡 정보의 실제 길이(lengthSeconds) → 플레이어 바 표시 시간 → getDuration 순으로 사용
+        const response = player?.getPlayerResponse?.();
+        if (response?.videoDetails?.videoId === info.videoId) duration = Number(response.videoDetails.lengthSeconds) * 1000 || 0;
+        if (!duration && timeInfoEl) {
             const timeParts = timeInfoEl.textContent.split('/');
             if (timeParts.length === 2) {
-                progress = parseTimeToMs(timeParts[0]);
                 duration = parseTimeToMs(timeParts[1]);
+                if (!progress) progress = parseTimeToMs(timeParts[0]);
             }
-        } else if (video) {
-            progress = Math.floor(video.currentTime * 1000);
-            duration = Math.floor(video.duration * 1000);
         }
+        if (!duration && player?.getDuration) duration = Math.floor(player.getDuration() * 1000);
+        if (!duration && video) duration = Math.floor(video.duration * 1000) || 0;
 
-        let isPlaying = navigator.mediaSession ? (navigator.mediaSession.playbackState === 'playing') : (video && !video.paused);
+        let isPlaying = navigator.mediaSession?.playbackState
+            ? navigator.mediaSession.playbackState === 'playing'
+            : !!(video && !video.paused);
 
         const state = {
             playing: isPlaying,
-            title: titleEl.textContent.trim(),
-            artist: artist.trim(),
-            album: album.trim(),
-            albumArt: imgEl ? imgEl.src : '',
+            title: info.title,
+            artist: info.artist,
+            album: info.album,
+            albumArt: info.albumArt,
+            videoId: info.videoId,
             progress: progress,
+            sampledAt: Date.now(), // 위젯이 전송/폴링 지연만큼 진행 시간을 보정하는 기준
             duration: duration,
             lyric: currentLyric
         };
@@ -71,16 +182,56 @@
     // =====================================================================
     // 2. 실시간 명령 수신기
     // =====================================================================
+    // 유튜브 뮤직이 OS 미디어 키용으로 등록하는 핸들러를 가로채 보관 (DOM 구조 변경에 영향 없음)
+    const mediaHandlers = {};
+    if (navigator.mediaSession?.setActionHandler) {
+        const origSetActionHandler = navigator.mediaSession.setActionHandler.bind(navigator.mediaSession);
+        navigator.mediaSession.setActionHandler = function (action, handler) {
+            mediaHandlers[action] = handler;
+            return origSetActionHandler(action, handler);
+        };
+    }
+
+    function runMediaAction(action, details) {
+        const handler = mediaHandlers[action];
+        if (!handler) return false;
+        try { handler({ action, ...details }); return true; } catch (e) { return false; }
+    }
+
+    function clickPlayerBarButton(selectors) {
+        const bar = document.querySelector('ytmusic-player-bar');
+        for (const sel of selectors) {
+            const btn = bar?.querySelector(sel) || document.querySelector(sel);
+            if (btn) { btn.click(); return true; }
+        }
+        return false;
+    }
+
+    function handleCommand(command) {
+        if (command === 'play-pause') {
+            const video = document.querySelector('video.html5-main-video');
+            const playing = navigator.mediaSession?.playbackState
+                ? navigator.mediaSession.playbackState === 'playing'
+                : !!(video && !video.paused);
+            if (runMediaAction(playing ? 'pause' : 'play')) return;
+            if (clickPlayerBarButton(['#play-pause-button', '.play-pause-button'])) return;
+            if (video) playing ? video.pause() : video.play();
+        } else if (command === 'next') {
+            if (runMediaAction('nexttrack')) return;
+            if (clickPlayerBarButton(['.next-button', '[aria-label="다음"]', '[aria-label="Next"]'])) return;
+            document.getElementById('movie_player')?.nextVideo?.();
+        } else if (command === 'previous') {
+            if (runMediaAction('previoustrack')) return;
+            if (clickPlayerBarButton(['.previous-button', '[aria-label="이전"]', '[aria-label="Previous"]'])) return;
+            document.getElementById('movie_player')?.previousVideo?.();
+        }
+    }
+
     let evtSource = null;
     function connectSSE() {
         if (evtSource) evtSource.close();
         evtSource = new EventSource("http://127.0.0.1:8888/command-stream");
-        evtSource.onmessage = function (event) {
-            const command = event.data;
-            if (command === 'play-pause') document.querySelector('#play-pause-button')?.click();
-            else if (command === 'next') document.querySelector('.next-button')?.click();
-            else if (command === 'previous') document.querySelector('.previous-button')?.click();
-        };
+        evtSource.onmessage = (event) => handleCommand(event.data);
         evtSource.onerror = () => { evtSource.close(); setTimeout(connectSSE, 3000); };
     }
     connectSSE();
@@ -173,13 +324,13 @@
         ws.onerror = () => ws.close();
     };
 
-    const setupAudioAnalysis = () => {
+    const setupAudioAnalysis = (existingCtx) => {
         if (audioSetupDone) return;
         try {
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            audioCtx = existingCtx || new (window.AudioContext || window.webkitAudioContext)();
             analyser = audioCtx.createAnalyser();
             analyser.fftSize = 256;
-            analyser.smoothingTimeConstant = 0.85;
+            analyser.smoothingTimeConstant = 0.4;
             analyser.connect(audioCtx.destination);
             audioSetupDone = true;
             connectWS();
@@ -188,8 +339,27 @@
         }
     };
 
-    window.addEventListener('click', () => {
-        if (!audioSetupDone) setupAudioAnalysis();
-    }, { once: true });
+    // 유튜브 뮤직 버튼은 클릭 이벤트 전파를 막는 경우가 있으므로 캡처 단계에서 첫 사용자 입력을 감지
+    ['pointerdown', 'keydown', 'click'].forEach(type => {
+        window.addEventListener(type, () => {
+            if (!audioSetupDone) setupAudioAnalysis();
+        }, { capture: true });
+    });
+
+    // 새로고침 후 페이지를 클릭하지 않고 위젯으로만 재생하는 경우:
+    // 브라우저가 오디오를 허용한 상태(running)일 때만 바로 연결 (suspended 상태로 연결하면 소리가 끊기므로 금지)
+    let silentSetupAttempts = 0;
+    function trySetupWithoutGesture() {
+        if (audioSetupDone || silentSetupAttempts >= 3) return;
+        const video = document.querySelector('video.html5-main-video');
+        if (!video || video.paused) return;
+        silentSetupAttempts++;
+        try {
+            const probe = new (window.AudioContext || window.webkitAudioContext)();
+            if (probe.state === 'running') setupAudioAnalysis(probe);
+            else probe.close();
+        } catch (e) { }
+    }
+    setInterval(trySetupWithoutGesture, 2000);
 
 })();

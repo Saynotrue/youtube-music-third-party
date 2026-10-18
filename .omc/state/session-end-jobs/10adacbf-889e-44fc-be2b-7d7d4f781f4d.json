@@ -1,0 +1,328 @@
+{
+  "version": 1,
+  "jobId": "0407616b-edfe-48fc-88df-202e6ef77f72",
+  "sessionId": "10adacbf-889e-44fc-be2b-7d7d4f781f4d",
+  "scopeKey": "cc944c6440c5ce51abdb75b7cbd04fe4fa5931f4f5b87105348d66ac3faba24d",
+  "revision": 41,
+  "createdAt": "2026-10-17T14:21:49.614Z",
+  "updatedAt": "2026-10-17T14:21:50.993Z",
+  "producerGraceExpiresAt": "2026-10-17T14:22:19.615Z",
+  "bestEffortDeadlineAt": "2026-10-17T14:23:10.615Z",
+  "producers": {
+    "core": {
+      "state": "sealed",
+      "intentKey": "fc3ac7402515150103d672ef156727af04ed459db4c68b0d6272675306381583",
+      "payloadDigest": "fc3ac7402515150103d672ef156727af04ed459db4c68b0d6272675306381583",
+      "sealedAt": "2026-10-17T14:21:49.673Z",
+      "sealedBy": "foreground"
+    },
+    "wiki": {
+      "state": "no-op",
+      "sealedAt": "2026-10-17T14:21:49.614Z",
+      "sealedBy": "wiki-producer"
+    }
+  },
+  "actions": {
+    "foreground-cleanup": {
+      "class": "required",
+      "phase": "deferred-required",
+      "status": "completed",
+      "attempts": 0,
+      "idempotencyKey": "febf6dba2f2536433960a07f7cedce72e946b43ced0896570df80f017b8914d2",
+      "payload": {
+        "transcriptPath": "/Users/yuchan/.claude/projects/-Users-yuchan-Desktop-dev-youtube-music-third-party/10adacbf-889e-44fc-be2b-7d7d4f781f4d.jsonl",
+        "cwd": "/Users/yuchan/Desktop/dev/youtube-music-third-party",
+        "reason": "other",
+        "input": {
+          "session_id": "10adacbf-889e-44fc-be2b-7d7d4f781f4d",
+          "transcript_path": "/Users/yuchan/.claude/projects/-Users-yuchan-Desktop-dev-youtube-music-third-party/10adacbf-889e-44fc-be2b-7d7d4f781f4d.jsonl",
+          "cwd": "/Users/yuchan/Desktop/dev/youtube-music-third-party",
+          "scratchpad_dir": "/private/tmp/claude-501/-Users-yuchan-Desktop-dev-youtube-music-third-party/10adacbf-889e-44fc-be2b-7d7d4f781f4d/scratchpad",
+          "hook_event_name": "SessionEnd",
+          "reason": "other"
+        },
+        "metrics": {
+          "session_id": "10adacbf-889e-44fc-be2b-7d7d4f781f4d",
+          "ended_at": "2026-10-17T14:21:49.613Z",
+          "reason": "other",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {},
+        "foregroundResult": {
+          "removedTransientFiles": 0,
+          "completedAt": "2026-10-17T14:21:49.673Z"
+        }
+      },
+      "budgetMs": 9000,
+      "completedAt": "2026-10-17T14:21:49.673Z",
+      "lastOutcomeCode": "completed"
+    },
+    "wiki-capture": {
+      "class": "required",
+      "phase": "deferred-required",
+      "status": "completed",
+      "attempts": 0,
+      "idempotencyKey": "1719cd1ef5b51e0269b78c4cb8c9308c9c1f7b82fd1c067fc034c060f23863f5",
+      "payload": {},
+      "budgetMs": 9000,
+      "completedAt": "2026-10-17T14:21:49.614Z"
+    },
+    "team-cleanup": {
+      "class": "required",
+      "phase": "deferred-required",
+      "status": "completed",
+      "attempts": 1,
+      "idempotencyKey": "cee6ac31df545408e1e822247ac249b3f8182a98a5fe8e448ae3b251e55bdee1",
+      "payload": {
+        "transcriptPath": "/Users/yuchan/.claude/projects/-Users-yuchan-Desktop-dev-youtube-music-third-party/10adacbf-889e-44fc-be2b-7d7d4f781f4d.jsonl",
+        "cwd": "/Users/yuchan/Desktop/dev/youtube-music-third-party",
+        "reason": "other",
+        "input": {
+          "session_id": "10adacbf-889e-44fc-be2b-7d7d4f781f4d",
+          "transcript_path": "/Users/yuchan/.claude/projects/-Users-yuchan-Desktop-dev-youtube-music-third-party/10adacbf-889e-44fc-be2b-7d7d4f781f4d.jsonl",
+          "cwd": "/Users/yuchan/Desktop/dev/youtube-music-third-party",
+          "scratchpad_dir": "/private/tmp/claude-501/-Users-yuchan-Desktop-dev-youtube-music-third-party/10adacbf-889e-44fc-be2b-7d7d4f781f4d/scratchpad",
+          "hook_event_name": "SessionEnd",
+          "reason": "other"
+        },
+        "metrics": {
+          "session_id": "10adacbf-889e-44fc-be2b-7d7d4f781f4d",
+          "ended_at": "2026-10-17T14:21:49.613Z",
+          "reason": "other",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {}
+      },
+      "budgetMs": 9000,
+      "claimedAt": "2026-10-17T14:21:49.794Z",
+      "runner": {
+        "attempt": 1,
+        "runnerNonce": "3dd99553-5a24-4606-8846-f260e5cd1d42",
+        "phase": "terminal",
+        "deadlineAt": "2026-10-17T14:21:59.707Z"
+      },
+      "lastOutcomeCode": "completed",
+      "completedAt": "2026-10-17T14:21:50.104Z"
+    },
+    "python-cleanup": {
+      "class": "required",
+      "phase": "deferred-required",
+      "status": "completed",
+      "attempts": 1,
+      "idempotencyKey": "1f1370c4ac056606059d517e2f106b602d8cbcb04587b3fcc5f3b9f89e649cd0",
+      "payload": {
+        "transcriptPath": "/Users/yuchan/.claude/projects/-Users-yuchan-Desktop-dev-youtube-music-third-party/10adacbf-889e-44fc-be2b-7d7d4f781f4d.jsonl",
+        "cwd": "/Users/yuchan/Desktop/dev/youtube-music-third-party",
+        "reason": "other",
+        "input": {
+          "session_id": "10adacbf-889e-44fc-be2b-7d7d4f781f4d",
+          "transcript_path": "/Users/yuchan/.claude/projects/-Users-yuchan-Desktop-dev-youtube-music-third-party/10adacbf-889e-44fc-be2b-7d7d4f781f4d.jsonl",
+          "cwd": "/Users/yuchan/Desktop/dev/youtube-music-third-party",
+          "scratchpad_dir": "/private/tmp/claude-501/-Users-yuchan-Desktop-dev-youtube-music-third-party/10adacbf-889e-44fc-be2b-7d7d4f781f4d/scratchpad",
+          "hook_event_name": "SessionEnd",
+          "reason": "other"
+        },
+        "metrics": {
+          "session_id": "10adacbf-889e-44fc-be2b-7d7d4f781f4d",
+          "ended_at": "2026-10-17T14:21:49.613Z",
+          "reason": "other",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {}
+      },
+      "budgetMs": 9000,
+      "claimedAt": "2026-10-17T14:21:50.126Z",
+      "runner": {
+        "attempt": 1,
+        "runnerNonce": "afaac04e-4e20-4666-95f3-e47ea6599e36",
+        "phase": "terminal",
+        "deadlineAt": "2026-10-17T14:21:59.707Z"
+      },
+      "lastOutcomeCode": "completed",
+      "completedAt": "2026-10-17T14:21:50.410Z"
+    },
+    "reply-cleanup": {
+      "class": "required",
+      "phase": "deferred-required",
+      "status": "completed",
+      "attempts": 1,
+      "idempotencyKey": "0b3a8b47c28b26d56aca004d4f572b96c118f16819c0d35162418816f9a5420a",
+      "payload": {
+        "transcriptPath": "/Users/yuchan/.claude/projects/-Users-yuchan-Desktop-dev-youtube-music-third-party/10adacbf-889e-44fc-be2b-7d7d4f781f4d.jsonl",
+        "cwd": "/Users/yuchan/Desktop/dev/youtube-music-third-party",
+        "reason": "other",
+        "input": {
+          "session_id": "10adacbf-889e-44fc-be2b-7d7d4f781f4d",
+          "transcript_path": "/Users/yuchan/.claude/projects/-Users-yuchan-Desktop-dev-youtube-music-third-party/10adacbf-889e-44fc-be2b-7d7d4f781f4d.jsonl",
+          "cwd": "/Users/yuchan/Desktop/dev/youtube-music-third-party",
+          "scratchpad_dir": "/private/tmp/claude-501/-Users-yuchan-Desktop-dev-youtube-music-third-party/10adacbf-889e-44fc-be2b-7d7d4f781f4d/scratchpad",
+          "hook_event_name": "SessionEnd",
+          "reason": "other"
+        },
+        "metrics": {
+          "session_id": "10adacbf-889e-44fc-be2b-7d7d4f781f4d",
+          "ended_at": "2026-10-17T14:21:49.613Z",
+          "reason": "other",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {}
+      },
+      "budgetMs": 9000,
+      "claimedAt": "2026-10-17T14:21:50.428Z",
+      "runner": {
+        "attempt": 1,
+        "runnerNonce": "fa947d5e-0b7b-45da-9677-efdb52ef3ee9",
+        "phase": "terminal",
+        "deadlineAt": "2026-10-17T14:21:59.707Z"
+      },
+      "lastOutcomeCode": "completed",
+      "completedAt": "2026-10-17T14:21:50.543Z"
+    },
+    "callback": {
+      "class": "best-effort",
+      "phase": "deferred-best-effort",
+      "status": "completed",
+      "attempts": 1,
+      "idempotencyKey": "d068ede2655bf89e0c0950e087d0603d7dcf45538e94f20a654d08c6f4841895",
+      "payload": {
+        "transcriptPath": "/Users/yuchan/.claude/projects/-Users-yuchan-Desktop-dev-youtube-music-third-party/10adacbf-889e-44fc-be2b-7d7d4f781f4d.jsonl",
+        "cwd": "/Users/yuchan/Desktop/dev/youtube-music-third-party",
+        "reason": "other",
+        "input": {
+          "session_id": "10adacbf-889e-44fc-be2b-7d7d4f781f4d",
+          "transcript_path": "/Users/yuchan/.claude/projects/-Users-yuchan-Desktop-dev-youtube-music-third-party/10adacbf-889e-44fc-be2b-7d7d4f781f4d.jsonl",
+          "cwd": "/Users/yuchan/Desktop/dev/youtube-music-third-party",
+          "scratchpad_dir": "/private/tmp/claude-501/-Users-yuchan-Desktop-dev-youtube-music-third-party/10adacbf-889e-44fc-be2b-7d7d4f781f4d/scratchpad",
+          "hook_event_name": "SessionEnd",
+          "reason": "other"
+        },
+        "metrics": {
+          "session_id": "10adacbf-889e-44fc-be2b-7d7d4f781f4d",
+          "ended_at": "2026-10-17T14:21:49.613Z",
+          "reason": "other",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {}
+      },
+      "budgetMs": 2000,
+      "claimedAt": "2026-10-17T14:21:50.564Z",
+      "runner": {
+        "attempt": 1,
+        "runnerNonce": "391bc6cb-7d64-415e-92fe-42aa13ddd3a6",
+        "phase": "terminal",
+        "deadlineAt": "2026-10-17T14:21:59.707Z"
+      },
+      "lastOutcomeCode": "completed",
+      "completedAt": "2026-10-17T14:21:50.683Z"
+    },
+    "notification": {
+      "class": "best-effort",
+      "phase": "deferred-best-effort",
+      "status": "completed",
+      "attempts": 1,
+      "idempotencyKey": "89c0438ff63097ce04beb60efb87292ff68a7af350a0ee331f3de9dbf42d62fc",
+      "payload": {
+        "transcriptPath": "/Users/yuchan/.claude/projects/-Users-yuchan-Desktop-dev-youtube-music-third-party/10adacbf-889e-44fc-be2b-7d7d4f781f4d.jsonl",
+        "cwd": "/Users/yuchan/Desktop/dev/youtube-music-third-party",
+        "reason": "other",
+        "input": {
+          "session_id": "10adacbf-889e-44fc-be2b-7d7d4f781f4d",
+          "transcript_path": "/Users/yuchan/.claude/projects/-Users-yuchan-Desktop-dev-youtube-music-third-party/10adacbf-889e-44fc-be2b-7d7d4f781f4d.jsonl",
+          "cwd": "/Users/yuchan/Desktop/dev/youtube-music-third-party",
+          "scratchpad_dir": "/private/tmp/claude-501/-Users-yuchan-Desktop-dev-youtube-music-third-party/10adacbf-889e-44fc-be2b-7d7d4f781f4d/scratchpad",
+          "hook_event_name": "SessionEnd",
+          "reason": "other"
+        },
+        "metrics": {
+          "session_id": "10adacbf-889e-44fc-be2b-7d7d4f781f4d",
+          "ended_at": "2026-10-17T14:21:49.613Z",
+          "reason": "other",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {}
+      },
+      "budgetMs": 2000,
+      "claimedAt": "2026-10-17T14:21:50.703Z",
+      "runner": {
+        "attempt": 1,
+        "runnerNonce": "a107aaf7-ef4e-4272-a188-b1d9aa52126a",
+        "phase": "terminal",
+        "deadlineAt": "2026-10-17T14:21:59.707Z"
+      },
+      "lastOutcomeCode": "completed",
+      "completedAt": "2026-10-17T14:21:50.824Z"
+    },
+    "openclaw": {
+      "class": "best-effort",
+      "phase": "deferred-best-effort",
+      "status": "completed",
+      "attempts": 1,
+      "idempotencyKey": "31fe8f6e1cf204e27006de511df257326fdd98655122ca437013e8779ffc735b",
+      "payload": {
+        "transcriptPath": "/Users/yuchan/.claude/projects/-Users-yuchan-Desktop-dev-youtube-music-third-party/10adacbf-889e-44fc-be2b-7d7d4f781f4d.jsonl",
+        "cwd": "/Users/yuchan/Desktop/dev/youtube-music-third-party",
+        "reason": "other",
+        "input": {
+          "session_id": "10adacbf-889e-44fc-be2b-7d7d4f781f4d",
+          "transcript_path": "/Users/yuchan/.claude/projects/-Users-yuchan-Desktop-dev-youtube-music-third-party/10adacbf-889e-44fc-be2b-7d7d4f781f4d.jsonl",
+          "cwd": "/Users/yuchan/Desktop/dev/youtube-music-third-party",
+          "scratchpad_dir": "/private/tmp/claude-501/-Users-yuchan-Desktop-dev-youtube-music-third-party/10adacbf-889e-44fc-be2b-7d7d4f781f4d/scratchpad",
+          "hook_event_name": "SessionEnd",
+          "reason": "other"
+        },
+        "metrics": {
+          "session_id": "10adacbf-889e-44fc-be2b-7d7d4f781f4d",
+          "ended_at": "2026-10-17T14:21:49.613Z",
+          "reason": "other",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {}
+      },
+      "budgetMs": 2000,
+      "claimedAt": "2026-10-17T14:21:50.842Z",
+      "runner": {
+        "attempt": 1,
+        "runnerNonce": "3a67a78c-016e-4a5f-87f7-5365d4cc1705",
+        "phase": "terminal",
+        "deadlineAt": "2026-10-17T14:21:59.707Z"
+      },
+      "lastOutcomeCode": "completed",
+      "completedAt": "2026-10-17T14:21:50.957Z"
+    }
+  },
+  "owner": null,
+  "phase": "complete",
+  "completion": {
+    "completedAt": "2026-10-17T14:21:50.975Z",
+    "terminalDigest": "9360e87f9ab80a7677496f66074c88ba61c9c7bff945c4b6643ed780ebca7cdb",
+    "terminalRevision": 40
+  }
+}
