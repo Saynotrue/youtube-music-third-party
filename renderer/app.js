@@ -392,7 +392,20 @@ function parseLRC(lrc) {
     return result.sort((a, b) => a.time - b.time);
 }
 
+// 첫 가사가 시작되기 전(전주) 상태: 현재 줄에 ♪를 띄우고 첫 가사는 다음 줄에서 대기
+const LYRIC_INTRO_MARK = '♪';
+const LYRIC_INTRO_IDX = -100; // lastLyricIdx 초기값(-1)과 겹치지 않는 값
+
 function getLyricContext(progress) {
+    if (currentLyrics.length > 0 && progress < currentLyrics[0].time) {
+        return {
+            prev2: '', prev: '',
+            current: LYRIC_INTRO_MARK,
+            next: currentLyrics[0].text,
+            next2: currentLyrics[1]?.text || '',
+            idx: LYRIC_INTRO_IDX,
+        };
+    }
     let idx = 0;
     for (let i = 0; i < currentLyrics.length; i++) {
         if (currentLyrics[i].time <= progress) idx = i;
@@ -424,7 +437,8 @@ function animateLyricScroll(els, texts) {
 
     const oldTexts = els.map(el => el.textContent);
     // 한 줄씩 위로 넘어가는 경우만 스크롤 (현재 → 이전, 다음 → 현재)
-    const isStep = !!oldTexts[2] && texts[1] === oldTexts[2] && texts[2] === oldTexts[3];
+    // 전주(♪) → 첫 가사로 넘어갈 때도 스크롤 (♪는 이전 줄로 가지 않고 사라짐)
+    const isStep = !!oldTexts[2] && texts[2] === oldTexts[3] && (texts[1] === oldTexts[2] || oldTexts[2] === LYRIC_INTRO_MARK);
 
     if (!isStep) {
         // 곡 변경/탐색 등: 짧게 겹쳐 바뀌는 페이드 (빈 간격 없음)
