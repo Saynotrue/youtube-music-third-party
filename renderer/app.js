@@ -7,7 +7,6 @@ let currentLyrics = [];
 let lastTitle = '';
 let lastArtist = '';
 let isFetchingLyrics = false;
-let lyricsSource = null; // 'youtube' | 'lrclib' | null
 let lastLyricIdx = -1;
 let isPausedDisplayed = false;
 let lastLyricCheckTime = 0;
@@ -593,7 +592,6 @@ async function fetchLyrics(title, artist, album, videoId = null, retryCount = 0)
         if (title !== lastTitle || artist !== lastArtist) return;
 
         currentLyrics = res.lyrics ? parseLRC(res.lyrics) : [];
-        lyricsSource = currentLyrics.length > 0 ? res.source : null;
         if (currentLyrics.length > 0) {
             lastLyricIdx = -1;
         } else {
@@ -609,18 +607,6 @@ async function fetchLyrics(title, artist, album, videoId = null, retryCount = 0)
     } finally {
         isFetchingLyrics = false;
     }
-}
-
-// 외부 가사로 재생 중에 유튜브 자막이 뒤늦게 확보되면(예: CC 켜기) 조용히 교체
-async function upgradeToYtCaptions(title, artist, videoId) {
-    lyricsSource = 'youtube'; // 중복 요청 방지
-    try {
-        const url = `http://127.0.0.1:8888/lyrics?title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}&videoId=${encodeURIComponent(videoId)}`;
-        const res = await fetch(url).then(r => r.json());
-        if (title !== lastTitle || artist !== lastArtist || res.source !== 'youtube') return;
-        const parsed = parseLRC(res.lyrics);
-        if (parsed.length > 0) { currentLyrics = parsed; lastLyricIdx = -1; }
-    } catch (e) { }
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -776,7 +762,6 @@ async function syncWithServer() {
                 lastArtist = track.artist;
                 lastLyricIdx = -1;
                 currentLyrics = [];
-                lyricsSource = null;
 
                 const trackInfo = document.getElementById('track-info');
                 const lyricsContainer = document.getElementById('lyrics-container');
@@ -797,22 +782,18 @@ async function syncWithServer() {
                 if (trackInfo && lyricsContainer) { trackInfo.classList.remove('fade'); lyricsContainer.classList.remove('fade'); }
                 if (lpTextInfo) lpTextInfo.classList.remove('fade');
 
-                // 🚨 유튜브 CC 자막 추출용 영상 ID 확보
+                // 🚨 영상 ID 확보 (서버가 영어 제목/가수 조회에 사용)
                 let vid = track.videoId || null;
                 if (!vid && track.albumArt && track.albumArt.includes('i.ytimg.com')) {
                     vid = track.albumArt.match(/\/vi\/([^\/]+)\//)?.[1];
                 }
 
-                // 확보한 영상 ID를 함께 넘겨서 가사(또는 자막) 요청
+                // 확보한 영상 ID를 함께 넘겨서 가사 요청
                 fetchLyrics(track.title, track.artist, track.album, vid);
             }
         } else {
             if (track.progress < localProgress - 2000) lastLyricIdx = -1;
             localProgress = track.progress;
-
-            if (track.hasYtCaptions && track.videoId && lyricsSource !== 'youtube' && !isFetchingLyrics) {
-                upgradeToYtCaptions(lastTitle, lastArtist, track.videoId);
-            }
         }
 
         // 곡 전환 시 페이드(400ms) 대기 시간이 진행 시간에 누락되지 않도록 응답 받은 시점을 기준으로 사용

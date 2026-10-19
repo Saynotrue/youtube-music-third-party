@@ -136,31 +136,18 @@ app.post('/update-state', (req, res) => {
     res.json({ ok: true });
 });
 
-// ─── 유튜브 수동 자막 ────────────────────────────────────
-// 1) Tampermonkey가 플레이어의 자막 응답(CC 켰을 때)을 가로채 전송한 것: videoId → LRC
-// 2) 서버가 직접 조회한 결과 캐시: videoId → { lyrics, from } | null
-const pageCaptions = new Map();
-const serverCaptions = new Map();
-const CAPTION_CACHE_MAX = 50;
+// 최근 조회 결과 캐시 (오래된 항목부터 삭제)
+const CACHE_MAX = 50;
 
 function cacheSet(map, key, value) {
     map.delete(key);
     map.set(key, value);
-    if (map.size > CAPTION_CACHE_MAX) map.delete(map.keys().next().value);
+    if (map.size > CACHE_MAX) map.delete(map.keys().next().value);
 }
-
-app.post('/yt-captions', (req, res) => {
-    const { videoId, lyrics } = req.body || {};
-    if (videoId && lyrics) {
-        cacheSet(pageCaptions, videoId, lyrics);
-        console.log(`[가사 검색] 🎈 플레이어 자막 수신 (Video ID: ${videoId})`);
-    }
-    res.json({ ok: true });
-});
 
 app.get('/current-track', async (req, res) => {
     if (currentService === 'youtube') {
-        res.json({ ...playerState, hasYtCaptions: !!(playerState.videoId && pageCaptions.has(playerState.videoId)) });
+        res.json(playerState);
     } else if (currentService === 'spotify') {
         if (!accessToken) return res.json({ playing: false });
         try {
@@ -177,32 +164,6 @@ app.get('/current-track', async (req, res) => {
     }
 });
 
-// ─── 🚨 유튜브 수동 자막(CC) 추출기 ─────────────────────
-// 웹(watch 페이지)에서 얻은 자막 주소는 브라우저 인증 토큰(pot)이 없으면 빈 응답을 주므로,
-// 토큰 없이 자막을 내려주는 모바일 앱 클라이언트로 플레이어 정보를 조회합니다.
-// '자동 생성 자막(asr)'은 원천 차단합니다.
-const INNERTUBE_CLIENTS = [
-    { clientName: 'ANDROID', clientVersion: '20.10.38', androidSdkVersion: 30, hl: 'ko' },
-    { clientName: 'IOS', clientVersion: '20.10.4', deviceModel: 'iPhone16,2', hl: 'ko' },
-];
-const PREFERRED_LANGS = ['ko', 'ja', 'en'];
-
-function msToLrcTag(ms) {
-    const mins = Math.floor(ms / 60000);
-    const secs = ((ms % 60000) / 1000).toFixed(2);
-    return `[${String(mins).padStart(2, '0')}:${secs.padStart(5, '0')}]`;
-}
-
-function json3ToLrc(json) {
-    const lines = [];
-    for (const ev of json?.events || []) {
-        if (!ev.segs) continue;
-        const text = ev.segs.map(s => s.utf8 || '').join('').replace(/\s*\n\s*/g, ' ').trim();
-        if (text) lines.push(`${msToLrcTag(ev.tStartMs || 0)} ${text}`);
-    }
-    return lines.length > 0 ? lines.join('\n') : null;
-}
-
 // 텍스트에서 가장 많이 쓰인 문자 체계로 언어 추정 (영문은 글자 단위라 음절 문자와 비슷한 비중이 되도록 보정)
 function detectTextLang(text) {
     const count = (re) => (text.match(re) || []).length;
@@ -215,141 +176,7 @@ function detectTextLang(text) {
     return score > 0 ? lang : null;
 }
 
-// 실제로 부르는 언어: 유튜브 음성 인식(자동 생성 자막)의 언어가 가장 정확, 없으면 제목의 가나로 일본어 추정
-function detectSungLang(tracks, titleHint) {
-    const asr = tracks.find(t => t.kind === 'asr');
-    if (asr?.languageCode) return asr.languageCode.slice(0, 2);
-    if (/[ぁ-ゟァ-ヿ]/.test(titleHint || '')) return 'ja';
-    return null;
-}
-
-// 반환: { lyrics, lang, original, sungLang } | null(수동 자막 없음) | undefined(조회 실패 → 캐시하지 않고 다음에 재시도)
-//  original=false → 부르는 언어와 다른 번역 자막 (원문 가사를 못 찾았을 때만 사용)
-// 유튜브가 요청 제한(429)을 걸면 한동안 조회를 멈춤 (계속 요청하면 제한이 길어지고 가사 표시도 느려짐)
-const RATE_LIMIT_COOLDOWN_MS = 10 * 60 * 1000;
-let ytRateLimitedUntil = 0;
-
-async function fetchYouTubeCC(vid, titleHint) {
-    if (Date.now() < ytRateLimitedUntil) return undefined;
-    let failed = false;
-    for (const client of INNERTUBE_CLIENTS) {
-        try {
-            const { data } = await axios.post('https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
-                { context: { client }, videoId: vid },
-                { headers: { 'Content-Type': 'application/json' }, timeout: 5000 });
-
-            const tracks = data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-            if (!tracks) continue; // 이 클라이언트로 조회 실패 → 다음 클라이언트
-
-            const manualTracks = tracks.filter(t => t.kind !== 'asr');
-            if (manualTracks.length === 0) return null;
-
-            // 유튜브 뮤직 제목이 영어여도(예: Mephisto) 공식 영상 제목에는 원제(예: 女王蜂『メフィスト』)가 있는 경우가 많으므로 함께 확인
-            const sungLang = detectSungLang(tracks, `${titleHint || ''} ${data?.videoDetails?.title || ''}`);
-            // 부르는 언어와 같은 자막 → 선호 언어 순 → 나머지
-            const langRank = (t) => {
-                const code = t.languageCode?.slice(0, 2);
-                if (sungLang && code === sungLang) return -1;
-                const idx = PREFERRED_LANGS.indexOf(code);
-                return idx === -1 ? PREFERRED_LANGS.length : idx;
-            };
-            const ordered = [...manualTracks].sort((a, b) => langRank(a) - langRank(b)).slice(0, 3);
-
-            let fallback = null;
-            for (const track of ordered) {
-                const url = new URL(track.baseUrl);
-                url.searchParams.set('fmt', 'json3');
-                const { data: json } = await axios.get(url.toString(), { timeout: 5000 });
-                const lyrics = json3ToLrc(json);
-                if (!lyrics) continue;
-
-                // 자막 언어 표기가 틀린 경우가 있으므로 실제 내용의 문자 체계로 원문 여부 판단
-                const contentLang = detectTextLang(lyrics);
-                const original = !sungLang || contentLang === sungLang;
-                const result = { lyrics, lang: track.languageCode, original, sungLang };
-                if (original) {
-                    console.log(`[가사 검색] 🎈 원문 자막 추출 성공 (Video ID: ${vid}, 자막: ${track.languageCode}, 노래: ${sungLang || '알 수 없음'})`);
-                    return result;
-                }
-                if (!fallback) fallback = result;
-            }
-            if (fallback) console.log(`[가사 검색] 🌐 번역 자막만 존재 (Video ID: ${vid}, 자막: ${fallback.lang}, 노래: ${sungLang})`);
-            return fallback;
-        } catch (err) {
-            failed = true;
-            console.error(`[가사 검색] 자막 추출 오류 (${client.clientName}):`, err.message);
-            if (err.response?.status === 429) {
-                ytRateLimitedUntil = Date.now() + RATE_LIMIT_COOLDOWN_MS;
-                console.log('[가사 검색] ⏸ 유튜브 요청 제한 감지 → 10분간 자막 조회 중지 (lrclib만 사용)');
-                break;
-            }
-        }
-    }
-    return failed ? undefined : null;
-}
-
-// 유튜브 뮤직의 '노래(음원)' 버전에는 자막이 없는 경우가 많으므로, 같은 곡의 공식 영상을 유튜브에서 찾아 자막을 가져옵니다.
 const normalize = (s) => (s || '').toLowerCase().replace(/[\s'"`‘’“”「」『』【】\[\]()（）|·・\-_:~!?.,]/g, '');
-const EXCLUDE_KEYWORDS = /노래방|karaoke|커버|cover|inst\b|instrumental|reaction|리액션|piano|guitar|bass|drum|vietsub|싱크룸|직캠|fancam|1시간|1hour|playlist/i;
-
-async function findCounterpartVideoIds(title, artist, excludeId) {
-    try {
-        const { data } = await axios.post('https://www.youtube.com/youtubei/v1/search?prettyPrint=false',
-            { context: { client: { clientName: 'WEB', clientVersion: '2.20260901.00.00', hl: 'ko', gl: 'KR' } }, query: `${title} ${artist}`.trim() },
-            { headers: { 'Content-Type': 'application/json' }, timeout: 5000 });
-
-        const videos = [];
-        (function walk(o) {
-            if (!o || typeof o !== 'object') return;
-            if (o.videoRenderer) {
-                const v = o.videoRenderer;
-                videos.push({ id: v.videoId, title: v.title?.runs?.map(r => r.text).join('') || '', owner: v.ownerText?.runs?.map(r => r.text).join('') || '' });
-                return;
-            }
-            for (const k in o) walk(o[k]);
-        })(data);
-
-        const nTitle = normalize(title);
-        const nArtist = normalize(artist);
-        return videos
-            .slice(0, 8)
-            .filter(v => v.id !== excludeId && normalize(v.title).includes(nTitle))
-            // 원곡 제목에 없는 커버/노래방/연주 등의 키워드가 붙은 영상은 제외
-            .filter(v => !EXCLUDE_KEYWORDS.test(v.title) || EXCLUDE_KEYWORDS.test(title))
-            // 아티스트 공식 채널 영상 우선
-            .sort((a, b) => Number(normalize(b.owner + b.title).includes(nArtist)) - Number(normalize(a.owner + a.title).includes(nArtist)))
-            .slice(0, 3)
-            .map(v => v.id);
-    } catch (err) {
-        console.error('[가사 검색] 공식 영상 검색 오류:', err.message);
-        return null; // 조회 실패 (호출부에서 캐시하지 않음)
-    }
-}
-
-// 원문 자막 우선. 번역 자막만 있으면 original=false로 반환 (호출부에서 lrclib 이후 최후 수단으로 사용)
-async function findYouTubeCaptions(videoId, title, artist, titleHint) {
-    if (serverCaptions.has(videoId)) return serverCaptions.get(videoId);
-
-    let result = await fetchYouTubeCC(videoId, titleHint);
-    let failed = result === undefined;
-    if (!result?.original && title) {
-        const candidates = await findCounterpartVideoIds(title, artist, videoId);
-        if (candidates === null) failed = true;
-        for (const candidate of candidates || []) {
-            const cc = await fetchYouTubeCC(candidate, titleHint);
-            if (cc === undefined) failed = true;
-            if (cc?.original) {
-                console.log(`[가사 검색] 🔁 공식 영상 자막 사용 (${videoId} → ${candidate})`);
-                result = cc;
-                break;
-            }
-            if (cc && !result) result = cc;
-        }
-    }
-    // 조회 오류(429 등)로 못 찾은 경우는 '자막 없음'으로 확정하지 않음
-    if (result || !failed) cacheSet(serverCaptions, videoId, result || null);
-    return result || null;
-}
 
 // ─── 원곡 정보 추출 (커버 영상 제목 → 원곡 가수 / 원제) ─────────
 const JP_CHARS = /[ぁ-ゟァ-ヿ一-龥]/;
@@ -512,20 +339,9 @@ app.get('/lyrics', async (req, res) => {
     let cleanTitle = original.titles[0] || title.split(/[\[\(\-\/\|]/)[0].trim();
     if (!cleanTitle) cleanTitle = title.trim();
 
-    // 🚨 [1순위] 유튜브에 등록된 원문(부르는 언어) 수동 자막 (플레이어가 받은 자막 → 서버 조회 → 같은 곡 공식 영상 자막)
-    let ytCC = null;
-    if (videoId) {
-        if (pageCaptions.has(videoId)) return res.json({ lyrics: pageCaptions.get(videoId), source: 'youtube' });
-        ytCC = await findYouTubeCaptions(videoId, cleanTitle, cleanArtist, title);
-        if (ytCC?.original) return res.json({ lyrics: ytCC.lyrics, source: 'youtube' });
-    }
-
-    // 유튜브 자막에서 확인한 실제로 부르는 언어 (예: 일본어 노래에 한국어 번역 자막만 있는 경우 'ja')
-    const sungLang = ytCC?.sungLang || null;
-
     // 원곡 정보: 제목 괄호 안의 원곡 가수/원제, 없으면 유튜브 검색으로 일본어 원제 확인
     // 제목이 한국어 번역 제목일 때만 원제 검색 (예: "BOW AND ARROW"처럼 이미 원제인 경우는 검색하지 않음)
-    if (original.tracks.length === 0 && /[가-힣]/.test(cleanTitle) && (original.artists.length > 0 || sungLang === 'ja')) {
+    if (original.tracks.length === 0 && /[가-힣]/.test(cleanTitle) && original.artists.length > 0) {
         const resolved = await resolveJapaneseTitle(cleanTitle, original.artists[0]);
         if (resolved) original.tracks.push(resolved);
     }
@@ -554,7 +370,6 @@ app.get('/lyrics', async (req, res) => {
 
     // 검색 순서: 커버 가수 버전 → 원제(+원곡 가수) → 원제 단독 → 유튜브 뮤직 제목(+가수) → 제목 단독
     const queries = [];
-    const jpExpect = sungLang || 'ja';
 
     // 유튜브 뮤직 가수 이름은 "hebi. 헤비", "아오쿠모 린 AOKUMO RIN"처럼 표기가 섞여 있어 lrclib에서 검색되지 않으므로 표기별로 분리
     // 제목의 커버 가수 부분 (예: "アスノヨゾラ哨戒班 / Hebi. cover" → "Hebi", "… | 아라하시 타비 ARAHASHI TABI cover")
@@ -584,7 +399,7 @@ app.get('/lyrics', async (req, res) => {
     // 제목이 같아도 가수만 영어 표기가 다른 경우가 있음 (예: Festa! / 아카네 리제 → Festa! / Akane Lize)
     const englishTitle = englishMeta && (normalize(englishMeta.title) !== normalize(title) || normalize(englishMeta.artist) !== normalize(artist))
         ? (parseOriginalSong(englishMeta.title).titles[0] || englishMeta.title) : null;
-    const englishExpect = sungLang || (/[ぁ-ゟァ-ヿ]/.test(cleanTitle) ? 'ja' : null);
+    const englishExpect = /[ぁ-ゟァ-ヿ]/.test(cleanTitle) ? 'ja' : null;
     if (englishTitle) {
         console.log(`[가사 검색] 🔤 영어 표기: ${englishTitle} / ${englishMeta.artist}`);
         // 영어 제목으로 찾으면 영어판 가사(예: アイドル → Idol)가 걸리므로, 원제가 일본어면 일본어 가사만 채택
@@ -598,16 +413,16 @@ app.get('/lyrics', async (req, res) => {
     }
     // "가수 - 곡명"의 순서를 알 수 없으므로 (원제+원곡 가수) 조합을 모두 먼저 시도한 뒤 원제 단독 검색
     for (const track of original.tracks) {
-        for (const a of original.artists) if (a !== track) queries.push([{ track_name: track, artist_name: a }, jpExpect]);
+        for (const a of original.artists) if (a !== track) queries.push([{ track_name: track, artist_name: a }, 'ja']);
     }
     // 제목에 원곡 가수가 적힌 경우 (예: "W/X/Y (Tani Yuuki)", "Henceforth - Orangestar")
     for (const t of original.titles) {
-        for (const a of original.artists) if (a !== t) queries.push([{ track_name: t, artist_name: a }, sungLang]);
+        for (const a of original.artists) if (a !== t) queries.push([{ track_name: t, artist_name: a }, null]);
     }
-    for (const track of original.tracks) queries.push([{ track_name: track }, jpExpect]);
-    queries.push([{ track_name: cleanTitle, artist_name: cleanArtist }, sungLang]);
-    for (const t of original.titles) queries.push([{ track_name: t }, sungLang]);
-    queries.push([{ track_name: cleanTitle }, sungLang]);
+    for (const track of original.tracks) queries.push([{ track_name: track }, 'ja']);
+    queries.push([{ track_name: cleanTitle, artist_name: cleanArtist }, null]);
+    for (const t of original.titles) queries.push([{ track_name: t }, null]);
+    queries.push([{ track_name: cleanTitle }, null]);
     if (englishTitle) queries.push([{ track_name: englishTitle }, englishExpect]);
 
     // 같은 곡명의 다른 가수 곡(예: ライラック / 美波)을 피하기 위해, 제목에서 알아낸 원곡 가수와 일치하는 결과를 우선
@@ -678,9 +493,6 @@ app.get('/lyrics', async (req, res) => {
     }
 
     console.log(`[가사 검색] ❌ lrclib에서 가사를 찾지 못함 (검색어: ${[...tried].map(k => Object.values(JSON.parse(k)).join(' / ')).join(' | ')})`);
-
-    // [최후 수단] 원문 가사를 못 찾았으면 번역 자막이라도 표시
-    if (ytCC) return res.json({ lyrics: ytCC.lyrics, source: 'youtube-translation' });
 
     res.json({ lyrics: null, source: null });
 });

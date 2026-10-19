@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Music Ultimate Integration (Ultra Light v7.1)
 // @namespace    http://tampermonkey.net/
-// @version      7.8
+// @version      7.9
 // @author       You
 // @match        https://music.youtube.com/*
 // @grant        none
@@ -11,83 +11,6 @@
 
 (function () {
     'use strict';
-
-    // =====================================================================
-    // 0. 플레이어가 받은 자막(CC) 가로채기 → LRC 변환 후 서버로 전송
-    //    (자막 조회 자체는 서버가 담당. 페이지에서 직접 요청하면 인증 토큰이 없어 빈 응답이 옴)
-    // =====================================================================
-
-    function msToLrcTag(ms) {
-        const mins = Math.floor(ms / 60000);
-        const secs = ((ms % 60000) / 1000).toFixed(2);
-        return `[${String(mins).padStart(2, '0')}:${secs.padStart(5, '0')}]`;
-    }
-
-    // json3 / srv3(XML) / 구형 XML 자막을 모두 LRC로 변환
-    function captionsToLrc(raw) {
-        const lines = [];
-        const push = (ms, text) => {
-            const clean = (text || '').replace(/\s*\n\s*/g, ' ').trim();
-            if (clean) lines.push(`${msToLrcTag(ms)} ${clean}`);
-        };
-
-        const body = (raw || '').trim();
-        if (!body) return null;
-
-        if (body.startsWith('{')) {
-            const json = JSON.parse(body);
-            for (const ev of json.events || []) {
-                if (!ev.segs) continue;
-                push(ev.tStartMs || 0, ev.segs.map(s => s.utf8 || '').join(''));
-            }
-        } else {
-            const doc = new DOMParser().parseFromString(body, 'text/xml');
-            doc.querySelectorAll('p[t]').forEach(p => push(Number(p.getAttribute('t')), p.textContent));
-            if (lines.length === 0) {
-                doc.querySelectorAll('text[start]').forEach(t => push(parseFloat(t.getAttribute('start')) * 1000, t.textContent));
-            }
-        }
-        return lines.length > 0 ? lines.join('\n') : null;
-    }
-
-    function postCaptions(videoId, lyrics) {
-        fetch("http://127.0.0.1:8888/yt-captions", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ videoId, lyrics })
-        }).catch(() => { });
-    }
-
-    // 사용자가 CC를 켜면 플레이어가 받아오는 자막 응답을 가로채서 사용
-    function handleTimedTextResponse(url, raw) {
-        try {
-            const u = new URL(url, location.origin);
-            if (!u.pathname.includes('/api/timedtext') || u.searchParams.get('kind') === 'asr') return;
-            const videoId = u.searchParams.get('v');
-            const lrc = captionsToLrc(raw);
-            if (videoId && lrc) postCaptions(videoId, lrc);
-        } catch (e) { }
-    }
-
-    const origFetch = window.fetch;
-    window.fetch = function (input) {
-        const promise = origFetch.apply(this, arguments);
-        const url = typeof input === 'string' ? input : input?.url;
-        if (url && url.includes('/api/timedtext')) {
-            promise.then(r => r.clone().text()).then(raw => handleTimedTextResponse(url, raw)).catch(() => { });
-        }
-        return promise;
-    };
-
-    const origOpen = XMLHttpRequest.prototype.open;
-    XMLHttpRequest.prototype.open = function (method, url) {
-        if (typeof url === 'string' && url.includes('/api/timedtext')) {
-            this.addEventListener('load', () => {
-                if (this.responseType === '' || this.responseType === 'text') handleTimedTextResponse(url, this.responseText);
-            });
-        }
-        return origOpen.apply(this, arguments);
-    };
 
     function parseTimeToMs(timeStr) {
         if (!timeStr) return 0;
