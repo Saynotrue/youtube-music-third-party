@@ -244,7 +244,8 @@ async function fetchYouTubeCC(vid, titleHint) {
             const manualTracks = tracks.filter(t => t.kind !== 'asr');
             if (manualTracks.length === 0) return null;
 
-            const sungLang = detectSungLang(tracks, titleHint || data?.videoDetails?.title);
+            // 유튜브 뮤직 제목이 영어여도(예: Mephisto) 공식 영상 제목에는 원제(예: 女王蜂『メフィスト』)가 있는 경우가 많으므로 함께 확인
+            const sungLang = detectSungLang(tracks, `${titleHint || ''} ${data?.videoDetails?.title || ''}`);
             // 부르는 언어와 같은 자막 → 선호 언어 순 → 나머지
             const langRank = (t) => {
                 const code = t.languageCode?.slice(0, 2);
