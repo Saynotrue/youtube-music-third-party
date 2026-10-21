@@ -722,6 +722,10 @@ async function syncWithServer() {
             const age = Date.now() - track.sampledAt;
             if (age > 0 && age < 5000) track.progress += age;
         }
+        // 가사 클릭으로 이동한 직후, 이동 전에 측정된 위치가 오면 가사가 되돌아가므로 위젯이 계산한 위치를 유지
+        if (track.sampledAt && track.sampledAt < lastSeekAt && lastSyncTime !== null) {
+            track.progress = localProgress + (fetchedAt - lastSyncTime);
+        }
 
         // 1. 재생 상태 확인 및 이퀄라이저 제어
         if (!track.playing) {
@@ -903,6 +907,39 @@ async function syncWithServer() {
 // 가사 전환 페이드(250ms)가 끝날 때 가사가 정확히 보이도록 살짝 앞당김
 const LYRIC_LEAD_MS = 300;
 
+// ─── 전체화면 가사 클릭 → 그 가사 위치로 이동 ───
+// 줄 순서: [앞앞, 앞, 현재, 다음, 다음다음] → 현재 가사 기준 -2 ~ +2
+let shownLyricIdx = -1;
+let lastSeekAt = 0; // 이동 요청 시각 (이보다 먼저 측정된 재생 위치는 이동 전 값이므로 무시)
+const LYRIC_SLOT_OFFSETS = { 'prev2-lyric': -2, 'prev-lyric': -1, 'current-lyric': 0, 'next-lyric': 1, 'next2-lyric': 2 };
+
+function seekTo(ms) {
+    ms = Math.max(0, Math.round(ms));
+    lastSeekAt = Date.now();
+    // 응답을 기다리지 않고 화면부터 바로 이동
+    localProgress = ms;
+    lastSyncTime = performance.now();
+    // 일시정지 중에도 가사 표시가 바로 이동하도록 직접 갱신
+    const { prev2, prev, current, next, next2, idx } = getLyricContext(ms + LYRIC_LEAD_MS + appConfig.syncOffset);
+    lastLyricIdx = idx; shownLyricIdx = idx;
+    updateLyrics(prev, current, next, prev2, next2);
+    fetch('http://127.0.0.1:8888/seek', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ms })
+    }).catch(() => { });
+}
+
+Object.entries(LYRIC_SLOT_OFFSETS).forEach(([id, offset]) => {
+    document.getElementById(id)?.addEventListener('click', () => {
+        if (!document.body.classList.contains('fullscreen-mode') || currentLyrics.length === 0) return;
+        // 전주(♪) 표시 중에는 다음 줄이 첫 가사
+        const base = shownLyricIdx === LYRIC_INTRO_IDX ? -1 : shownLyricIdx;
+        const lyric = currentLyrics[base + offset];
+        if (!lyric) return;
+        // 가사가 현재 줄이 되는 시점(재생 위치 + 싱크 조절 ≥ 가사 시각)에 맞춰, 싱크 조절값만큼 보정한 위치로 이동
+        seekTo(lyric.time - appConfig.syncOffset);
+    });
+});
+
 function tickProgress() {
     if (!isPlaying || lastSyncTime === null || !trackDuration || trackDuration <= 0) {
         requestAnimationFrame(tickProgress); return;
@@ -920,7 +957,7 @@ function tickProgress() {
     if (currentLyrics.length > 0 && (now - lastLyricCheckTime > 100)) {
         lastLyricCheckTime = now;
         const { prev2, prev, current, next, next2, idx } = getLyricContext(progress + LYRIC_LEAD_MS + appConfig.syncOffset);
-        if (idx !== lastLyricIdx) { lastLyricIdx = idx; updateLyrics(prev, current, next, prev2, next2); }
+        if (idx !== lastLyricIdx) { lastLyricIdx = idx; shownLyricIdx = idx; updateLyrics(prev, current, next, prev2, next2); }
     }
     requestAnimationFrame(tickProgress);
 }

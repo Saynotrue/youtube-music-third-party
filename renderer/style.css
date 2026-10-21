@@ -1053,6 +1053,21 @@ body.fullscreen-mode #next2-lyric {
     color: var(--ui-lyric-dim);
 }
 
+/* 전체화면 가사: 클릭하면 그 가사 위치로 이동 (창 드래그 영역에서 빼야 클릭이 들어옴) */
+body.fullscreen-mode #prev2-lyric,
+body.fullscreen-mode #prev-lyric,
+body.fullscreen-mode #current-lyric,
+body.fullscreen-mode #next-lyric,
+body.fullscreen-mode #next2-lyric {
+    -webkit-app-region: no-drag;
+    pointer-events: auto !important;
+    cursor: pointer;
+}
+
+body.fullscreen-mode #lyrics-container span:empty {
+    cursor: default;
+}
+
 /* 앞뒤 두 번째 줄은 전체화면에서만 표시 (바 모드는 가로 배치라 3줄 유지) */
 .edge-lyric {
     display: none;

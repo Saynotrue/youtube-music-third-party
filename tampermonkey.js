@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Music Ultimate Integration (Ultra Light v7.1)
 // @namespace    http://tampermonkey.net/
-// @version      8.4
+// @version      8.5
 // @author       You
 // @match        https://music.youtube.com/*
 // @match        https://www.youtube.com/embed/*
@@ -350,6 +350,14 @@
     function handleCommand(command) {
         if (command.startsWith('captions:')) {
             try { extractCaptions(JSON.parse(command.slice('captions:'.length))); } catch (e) { }
+            return;
+        }
+        if (command.startsWith('seek:')) {
+            const sec = Number(command.slice('seek:'.length)) / 1000;
+            if (!Number.isFinite(sec)) return;
+            const player = document.getElementById('movie_player');
+            if (player?.seekTo) player.seekTo(sec, true);
+            else { const video = document.querySelector('video.html5-main-video'); if (video) video.currentTime = sec; }
             return;
         }
         if (command === 'play-pause') {

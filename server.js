@@ -44,6 +44,13 @@ app.post('/next', (req, res) => {
     res.json({ ok: true });
 });
 
+// 전체화면 가사 클릭 → 해당 가사 위치로 이동 (ms)
+app.post('/seek', (req, res) => {
+    const ms = Number(req.body?.ms);
+    if (Number.isFinite(ms) && ms >= 0) sendCommand(`seek:${Math.round(ms)}`);
+    res.json({ ok: true });
+});
+
 app.post('/update-state', (req, res) => {
     playerState = req.body;
     res.json({ ok: true });
