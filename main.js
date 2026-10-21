@@ -75,7 +75,7 @@ app.whenReady().then(() => {
     // 창 보이기/숨기기: 전체화면 창이 다른 창 뒤에 있으면(Alt+Tab으로 넘어간 경우) 숨기지 않고 앞으로 가져옴
     function isWindowShown() {
         if (!win.isVisible() || win.isMinimized()) return false;
-        return !win.isFullScreen() || win.isFocused();
+        return !isWindowFullScreen() || win.isFocused();
     }
     function bringWindowToFront() {
         if (win.isMinimized()) win.restore();
@@ -176,6 +176,22 @@ app.whenReady().then(() => {
 });
 
 // ─── 전체 화면 제어 통신 ────────────────────────────────
+// 🚨 macOS는 '단순 전체화면'(simple fullscreen) 사용: 기본 전체화면은 노치 양옆(메뉴 막대 줄)을 검게 비워 두지만,
+//    단순 전체화면은 메뉴 막대·Dock을 숨기고 그 줄까지 창을 늘려 화면 전체를 채움 (별도 데스크탑 공간도 만들지 않음)
+const USE_SIMPLE_FULLSCREEN = process.platform === 'darwin';
+
+function isWindowFullScreen() {
+    return USE_SIMPLE_FULLSCREEN ? win.isSimpleFullScreen() : win.isFullScreen();
+}
+
+function setWindowFullScreen(on) {
+    if (!USE_SIMPLE_FULLSCREEN) return win.setFullScreen(on);
+    // 크기 고정(resizable: false) 상태에서는 창 크기를 바꾸지 못할 수 있으므로 전환하는 동안만 풀어 둠
+    win.setResizable(true);
+    win.setSimpleFullScreen(on);
+    win.setResizable(false);
+}
+
 ipcMain.on('toggle-fullscreen', (event, isFullscreen) => {
     // 🚨 포커스 된 창을 찾는 방식에서 전역 상태인 win을 직접 참조하도록 안정성 강화
     if (!win || win.isDestroyed()) return;
@@ -186,10 +202,10 @@ ipcMain.on('toggle-fullscreen', (event, isFullscreen) => {
         // 🚨 전체화면 켜기: 항상 위 옵션을 강제로 해제하고 꽉 채움
         win.setAlwaysOnTop(false);
         win.setSkipTaskbar(false);
-        win.setFullScreen(true);
+        setWindowFullScreen(true);
     } else {
         // 🚨 전체화면 끄기: 전체화면을 풀고 무조건 항상 위 옵션 재활성화
-        win.setFullScreen(false);
+        setWindowFullScreen(false);
         win.setSkipTaskbar(true);
         win.setAlwaysOnTop(true, 'screen-saver');
     }
