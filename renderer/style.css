@@ -180,12 +180,12 @@ body {
 }
 
 #equalizer .bar {
-    width: 3px;
-    height: 3px;
+    width: 3.5px;
+    height: 3.5px;
     /* --bar-color: 앨범 아트 색으로 만든 막대별 그라데이션 색 (app.js applyEqPalette) */
     background: var(--bar-color, var(--theme-color));
-    border-radius: 3px !important;
-    box-shadow: 0 0 6px var(--bar-color, var(--theme-color));
+    border-radius: 999px !important; /* 캡슐 모양 (Dynamic Island 스타일) */
+    box-shadow: 0 0 8px var(--bar-color, var(--theme-color));
     /* 🚨 배경과 그림자 효과에만 transition 적용 */
     transition: background 0.5s ease, box-shadow 0.5s ease;
     will-change: height, transform;

@@ -974,16 +974,31 @@ function startEQ() {
 
         const bars = document.querySelectorAll('#equalizer .bar');
         let currentValues = new Array(10).fill(0);
-        let velocities = new Array(10).fill(0);
         let latestEqData = new Array(10).fill(0);
         let currentRenderMode = '';
+        let lastFrameTime = 0;
 
-        const STIFFNESS = 0.25;
-        const DAMPING = 0.65;
+        // 🎵 iOS Dynamic Island 이퀄라이저 스타일: 목표 높이를 넘지 않고(출렁임 없이) 부드럽게 따라감.
+        //    올라갈 때는 빠르게, 내려올 때는 천천히 (시간 상수 ms, 화면 주사율과 관계없이 같은 속도)
+        const ATTACK_MS = 45;
+        const RELEASE_MS = 110;
+        // 막대 높이(px): 소리가 없을 때는 막대 폭만 한 둥근 점, 최대는 바 높이(44px) 안에 들어가도록
+        const BAR_MIN_PX = 3.5;
+        const BAR_BASE_PX = 16;
+        // 움직임 강조: 막대마다 최근 평균 높이를 천천히 따라가는 기준선을 두고, 기준선에서 벗어난 만큼을 키워서 보여줌
+        //   → 계속 큰 소리(예: 베이스가 큰 곡의 저음역)는 낮아지고 비트가 칠 때의 변화가 크게 보임
+        let baselines = new Array(10).fill(0);
+        const BASELINE_RISE_MS = 1500;  // 기준선이 올라가는 속도 (느리게 → 비트가 기준선에 묻히지 않음)
+        const BASELINE_FALL_MS = 300;   // 기준선이 내려가는 속도 (조용해지면 빠르게 따라 내려감)
+        const BASELINE_WEIGHT = 0.8;    // 기준선을 얼마나 빼는지
+        const MOTION_GAIN = 2.6;        // 남은 변화량을 얼마나 키우는지
+        const BASELINE_SNAP_RATIO = 0.5; // 기준선이 소리의 절반보다 낮으면
+        const BASELINE_LOCK_MS = 400;    // 이 시간 동안 기준선을 소리에 고정
+        let baselineLock = new Array(10).fill(0);
 
         // 분석 범위를 올린 만큼(15dB = 255 / 70dB × 15)의 값, 막대 최대 높이 (기본 16px의 배수, 바 높이 44px 안에 들어가도록)
         const EQ_HEADROOM = 255 / 70 * 15;
-        const EQ_MAX_SCALE = 2.3;
+        const EQ_MAX_SCALE = 2.0;
         function renderVisualizer() {
             if (!isPlaying) {
                 latestEqData = new Array(10).fill(0);
@@ -997,39 +1012,54 @@ function startEQ() {
                     // 🚨 핵심: 자바스크립트 제어 시 CSS transition과의 충돌 방지
                     bar.style.transition = 'background 0.5s ease, box-shadow 0.5s ease';
                     if (visualizerMode === 'BARS') {
-                        bar.style.height = '16px';
-                        bar.style.borderRadius = '2px';
+                        // 크기는 매 프레임 높이로 조절 (scaleY로 늘리면 둥근 끝도 같이 늘어나 찌그러짐)
+                        bar.style.transform = 'none';
+                        bar.style.borderRadius = '';
                     } else {
-                        bar.style.height = '4px';
+                        bar.style.height = '3.5px';
                         bar.style.borderRadius = '50%';
                     }
                 });
             }
 
+            const now = performance.now();
+            const dt = lastFrameTime ? Math.min(now - lastFrameTime, 100) : 16;
+            lastFrameTime = now;
+
             bars.forEach((bar, index) => {
                 // Tampermonkey가 분석 범위를 15dB 올려 보내므로 그만큼 더해 원래 높이로 복원 (255를 넘는 값 = 예전엔 최대치에 붙던 큰 소리)
                 const raw = latestEqData[index] || 0;
                 let targetValue = (raw > 0 ? raw + EQ_HEADROOM : 0) * 0.5;
-                let diff = targetValue - currentValues[index];
-                velocities[index] += diff * STIFFNESS;
-                velocities[index] *= DAMPING;
-                currentValues[index] += velocities[index];
+                const diff = targetValue - currentValues[index];
+                const tau = diff > 0 ? ATTACK_MS : RELEASE_MS;
+                currentValues[index] += diff * (1 - Math.exp(-dt / tau));
 
-                if (Math.abs(velocities[index]) < 0.1 && Math.abs(diff) < 0.1) {
-                    velocities[index] = 0;
+                if (Math.abs(diff) < 0.1) {
                     currentValues[index] = targetValue;
                 } else {
                     isAnimating = true;
                 }
 
-                let value = Math.max(0, currentValues[index]);
+                const smoothed = Math.max(0, currentValues[index]);
+                // 재생 시작/일시정지 후 재개처럼 기준선이 소리보다 한참 낮으면, 소리가 자리 잡을 때까지 잠깐 기준선을 소리에 고정
+                //   (천천히 따라가게 두면 처음 1~2초 동안 모든 막대가 최대로 튀었다가 내려옴)
+                if (baselines[index] < smoothed * BASELINE_SNAP_RATIO) baselineLock[index] = BASELINE_LOCK_MS;
+                if (baselineLock[index] > 0) {
+                    baselines[index] = smoothed;
+                    baselineLock[index] -= dt;
+                } else {
+                    const baseTau = smoothed > baselines[index] ? BASELINE_RISE_MS : BASELINE_FALL_MS;
+                    baselines[index] += (smoothed - baselines[index]) * (1 - Math.exp(-dt / baseTau));
+                }
+                let value = Math.max(0, (smoothed - baselines[index] * BASELINE_WEIGHT) * MOTION_GAIN);
 
                 if (visualizerMode === 'BARS') {
                     let baseScale = Math.max(0.2, (value / 255) * 1.75);
                     let boostMultiplier = 1 + (index / (bars.length - 1)) * 1.5;
                     if (index === 0) boostMultiplier *= 1.8;
                     if (index === 1) boostMultiplier *= 1.6;
-                    bar.style.transform = `scaleY(${Math.min(baseScale * boostMultiplier, EQ_MAX_SCALE)})`;
+                    const scale = Math.min(baseScale * boostMultiplier, EQ_MAX_SCALE);
+                    bar.style.height = `${Math.max(BAR_MIN_PX, BAR_BASE_PX * scale).toFixed(1)}px`;
                 } else {
                     let totalVolume = currentValues.reduce((a, b) => a + b, 0);
                     bar.style.transform = `scaleY(1) translateY(${Math.sin((Date.now() / 150) + index) * ((totalVolume / 10 / 25) + 2)}px)`;
@@ -1082,7 +1112,7 @@ function stopEQ() {
     document.querySelectorAll('#equalizer .bar').forEach(bar => {
         // 중단 시에만 다시 transition을 적용하여 부드럽게 복구
         bar.style.transition = 'height 0.12s ease, transform 0.12s ease, background 0.5s ease';
-        bar.style.height = '3px';
+        bar.style.height = '3.5px';
         bar.style.transform = 'translateY(0) scaleY(1)';
     });
 }
