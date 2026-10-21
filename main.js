@@ -1,52 +1,14 @@
-const { app, BrowserWindow, screen, Tray, Menu, nativeImage, nativeTheme, globalShortcut, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, screen, Tray, Menu, nativeImage, nativeTheme, globalShortcut, ipcMain } = require('electron');
 const path = require('path');
-const fs = require('fs');
-
-// ─── 1. Spotify 환경 설정 관리 (config.json) ────────────────
-const configPath = path.join(app.getPath('userData'), 'config.json');
-
-function loadConfig() {
-    // 1. userData에 저장된 설정 우선 로드
-    if (fs.existsSync(configPath)) {
-        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        Object.assign(process.env, config);
-        return true;
-    }
-    // 2. 개발 환경 fallback: 프로젝트 루트 .env
-    if (!app.isPackaged) {
-        const envPath = path.join(__dirname, '.env');
-        if (fs.existsSync(envPath)) {
-            require('dotenv').config({ path: envPath });
-            if (process.env.SPOTIFY_CLIENT_ID) return true;
-        }
-    }
-    return false;
-}
-
-function saveConfig(clientId, clientSecret) {
-    const config = {
-        SPOTIFY_CLIENT_ID: clientId,
-        SPOTIFY_CLIENT_SECRET: clientSecret,
-        REDIRECT_URI: 'http://127.0.0.1:8888/callback',
-        PORT: '8888',
-    };
-    fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-    Object.assign(process.env, config); // 현재 프로세스 환경변수 업데이트
-}
 
 // ─── 전역 창 참조 및 상태 ────────────────────────────────
 let win;
 let tray = null;
-let setupWindow = null;
 let currentIconStyle = 'player';
 let currentWidgetStyle = 'eq';
 
 // ─── 2. 앱 실행 및 메인 윈도우 생성 ───────────────────────
 app.whenReady().then(() => {
-    // 환경변수 로드 (Spotify 설정이 없어도 진행됨)
-    loadConfig();
-
     // 통합 서버 구동
     require('./server.js');
 
@@ -110,9 +72,23 @@ app.whenReady().then(() => {
         tray.setImage(newTrayIcon);
     }
 
+    // 창 보이기/숨기기: 전체화면 창이 다른 창 뒤에 있으면(Alt+Tab으로 넘어간 경우) 숨기지 않고 앞으로 가져옴
+    function isWindowShown() {
+        if (!win.isVisible() || win.isMinimized()) return false;
+        return !win.isFullScreen() || win.isFocused();
+    }
+    function bringWindowToFront() {
+        if (win.isMinimized()) win.restore();
+        win.show();
+        win.focus();
+    }
+    function toggleWindow() {
+        isWindowShown() ? win.hide() : bringWindowToFront();
+    }
+
     // ─── 4. 동적 컨텍스트 메뉴 ────────────────────────────
     function getDynamicContextMenu() {
-        const isWindowVisible = win.isVisible() && !win.isMinimized();
+        const isWindowVisible = isWindowShown();
         return Menu.buildFromTemplate([
             {
                 label: '설정',
@@ -139,7 +115,7 @@ app.whenReady().then(() => {
                 accelerator: 'CommandOrControl+Shift+Space',
                 registerAccelerator: false,
                 click: () => {
-                    isWindowVisible ? win.hide() : (win.show(), win.focus());
+                    isWindowVisible ? win.hide() : bringWindowToFront();
                 },
             },
             { type: 'separator' },
@@ -180,10 +156,7 @@ app.whenReady().then(() => {
 
         if (settings.globalShortcut) {
             if (!globalShortcut.isRegistered('CommandOrControl+Shift+Space')) {
-                globalShortcut.register('CommandOrControl+Shift+Space', () => {
-                    if (win.isVisible() && !win.isMinimized()) win.hide();
-                    else { win.show(); win.focus(); }
-                });
+                globalShortcut.register('CommandOrControl+Shift+Space', toggleWindow);
             }
         } else {
             globalShortcut.unregister('CommandOrControl+Shift+Space');
@@ -199,40 +172,6 @@ app.whenReady().then(() => {
         win.webContents.send('show-widget-after-settings');
     });
 
-    // ─── 7. Spotify Setup 창 통신 ─────────────────────────
-    ipcMain.on('open-setup-window', () => {
-        if (setupWindow) {
-            setupWindow.focus();
-            return;
-        }
-        setupWindow = new BrowserWindow({
-            width: 450,
-            height: 550,
-            resizable: false,
-            alwaysOnTop: true,
-            parent: win,
-            modal: false,
-            backgroundColor: '#121212',
-            webPreferences: { nodeIntegration: true, contextIsolation: false }
-        });
-        setupWindow.loadFile(path.join(__dirname, 'renderer', 'setup.html'));
-        setupWindow.on('closed', () => { setupWindow = null; });
-    });
-
-    ipcMain.on('setup-submit', (event, { clientId, clientSecret }) => {
-        const cleanId = clientId.trim();
-        const cleanSecret = clientSecret.trim();
-
-        saveConfig(cleanId, cleanSecret);
-        if (setupWindow) setupWindow.close();
-
-        shell.openExternal('http://127.0.0.1:8888/login');
-    });
-
-    ipcMain.on('open-spotify-dashboard', () => {
-        shell.openExternal('https://developer.spotify.com/dashboard');
-    });
-
     win.setResizable(false);
 });
 
@@ -241,13 +180,17 @@ ipcMain.on('toggle-fullscreen', (event, isFullscreen) => {
     // 🚨 포커스 된 창을 찾는 방식에서 전역 상태인 win을 직접 참조하도록 안정성 강화
     if (!win || win.isDestroyed()) return;
 
+    // 🚨 위젯 바는 작업 표시줄/Alt+Tab 목록에서 숨기지만(skipTaskbar), 전체화면일 때는 일반 창처럼 표시해야
+    //    Windows에서 Alt+Tab으로 다른 창에 갔다가 다시 돌아올 수 있음
     if (isFullscreen) {
         // 🚨 전체화면 켜기: 항상 위 옵션을 강제로 해제하고 꽉 채움
         win.setAlwaysOnTop(false);
+        win.setSkipTaskbar(false);
         win.setFullScreen(true);
     } else {
         // 🚨 전체화면 끄기: 전체화면을 풀고 무조건 항상 위 옵션 재활성화
         win.setFullScreen(false);
+        win.setSkipTaskbar(true);
         win.setAlwaysOnTop(true, 'screen-saver');
     }
 });

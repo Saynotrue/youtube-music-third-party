@@ -1,16 +1,231 @@
 // ==UserScript==
 // @name         YouTube Music Ultimate Integration (Ultra Light v7.1)
 // @namespace    http://tampermonkey.net/
-// @version      7.9
+// @version      8.4
 // @author       You
 // @match        https://music.youtube.com/*
+// @match        https://www.youtube.com/embed/*
 // @grant        none
-// @noframes
 // @run-at       document-start
 // ==/UserScript==
 
 (function () {
     'use strict';
+
+    // 유튜브 뮤직 페이지 안의 다른 프레임에서는 실행하지 않음 (임베드 플레이어는 아래 자막 추출 전용으로만 실행)
+    if (location.hostname === 'music.youtube.com' && window.top !== window.self) return;
+
+    // =====================================================================
+    // 0. 유튜브 자막 추출 (lrclib에 가사가 없을 때 서버가 요청)
+    //    페이지의 플레이어가 자막을 불러오게 한 뒤 그 응답을 가로채 LRC로 변환해서 서버로 전송
+    //    (자막 주소로 직접 요청하면 플레이어의 인증 토큰이 없어 빈 응답이 오므로 플레이어를 통해 받음)
+    // =====================================================================
+
+    function msToLrcTag(ms) {
+        const mins = Math.floor(ms / 60000);
+        const secs = ((ms % 60000) / 1000).toFixed(2);
+        return `[${String(mins).padStart(2, '0')}:${secs.padStart(5, '0')}]`;
+    }
+
+    // json3 / srv3(XML) / 구형 XML 자막을 모두 LRC로 변환
+    function captionsToLrc(raw) {
+        const lines = [];
+        const push = (ms, text) => {
+            const clean = (text || '').replace(/\s*\n\s*/g, ' ').trim();
+            if (clean) lines.push(`${msToLrcTag(ms)} ${clean}`);
+        };
+
+        const body = (raw || '').trim();
+        if (!body) return null;
+
+        if (body.startsWith('{')) {
+            const json = JSON.parse(body);
+            for (const ev of json.events || []) {
+                if (!ev.segs) continue;
+                push(ev.tStartMs || 0, ev.segs.map(s => s.utf8 || '').join(''));
+            }
+        } else {
+            const doc = new DOMParser().parseFromString(body, 'text/xml');
+            doc.querySelectorAll('p[t]').forEach(p => push(Number(p.getAttribute('t')), p.textContent));
+            if (lines.length === 0) {
+                doc.querySelectorAll('text[start]').forEach(t => push(parseFloat(t.getAttribute('start')) * 1000, t.textContent));
+            }
+        }
+        return lines.length > 0 ? lines.join('\n') : null;
+    }
+
+    function postCaptions(videoId, lyrics, lang, from) {
+        fetch("http://127.0.0.1:8888/yt-captions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ videoId, lyrics, lang, from })
+        }).catch(() => { });
+    }
+
+    // 직접 등록한 자막(자동 생성 제외) 중 원하는 언어 순으로 선택, 없으면 첫 번째 자막
+    function pickCaptionTrack(tracks, langs) {
+        const manual = tracks.filter(t => t.kind !== 'asr');
+        for (const lang of langs) {
+            const track = manual.find(t => (t.languageCode || '').slice(0, 2) === lang);
+            if (track) return track;
+        }
+        return manual[0] || null;
+    }
+
+    // 추출하는 동안 화면에 자막이 뜨지 않도록 숨김
+    function setCaptionsHidden(hidden) {
+        let style = document.getElementById('lyrics-widget-hide-captions');
+        if (hidden && !style) {
+            style = document.createElement('style');
+            style.id = 'lyrics-widget-hide-captions';
+            style.textContent = '.ytp-caption-window-container, .caption-window { display: none !important; }';
+            document.documentElement.appendChild(style);
+        } else if (!hidden && style) {
+            style.remove();
+        }
+    }
+
+    // 플레이어가 자막을 불러오게 하고 그 응답을 가로챔 → { lyrics, lang } | null
+    const CAPTION_TIMEOUT_MS = 8000;
+    let captionCapture = null; // 진행 중인 추출: { videoId, finish }
+
+    function handleTimedTextResponse(url, raw) {
+        if (!captionCapture) return;
+        try {
+            const u = new URL(url, location.origin);
+            if (!u.pathname.includes('/api/timedtext') || u.searchParams.get('kind') === 'asr') return;
+            if (u.searchParams.get('v') !== captionCapture.videoId) return;
+            const lrc = captionsToLrc(raw);
+            if (lrc) captionCapture.finish(lrc);
+        } catch (e) { }
+    }
+
+    const origFetch = window.fetch;
+    window.fetch = function (input) {
+        const promise = origFetch.apply(this, arguments);
+        const url = typeof input === 'string' ? input : input?.url;
+        if (url && url.includes('/api/timedtext')) {
+            promise.then(r => r.clone().text()).then(raw => handleTimedTextResponse(url, raw)).catch(() => { });
+        }
+        return promise;
+    };
+
+    const origOpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function (method, url) {
+        if (typeof url === 'string' && url.includes('/api/timedtext')) {
+            this.addEventListener('load', () => {
+                if (this.responseType === '' || this.responseType === 'text') handleTimedTextResponse(url, this.responseText);
+            });
+        }
+        return origOpen.apply(this, arguments);
+    };
+
+    function capturePlayerCaptions(player, videoId, langs) {
+        return new Promise(async (resolve) => {
+            if (captionCapture) captionCapture.finish(null);
+
+            let restoreTrack = null;
+            try { restoreTrack = player.getOption?.('captions', 'track'); } catch (e) { }
+            let lang = null;
+            const finish = (lyrics) => {
+                if (captionCapture?.finish !== finish) return;
+                captionCapture = null;
+                clearTimeout(timer);
+                // 원래 쓰던 자막 설정으로 되돌림 (꺼져 있었으면 끔)
+                try {
+                    if (restoreTrack?.languageCode) player.setOption?.('captions', 'track', restoreTrack);
+                    else { player.setOption?.('captions', 'track', {}); player.unloadModule?.('captions'); }
+                } catch (e) { }
+                setCaptionsHidden(false);
+                resolve(lyrics ? { lyrics, lang } : null);
+            };
+            const timer = setTimeout(() => finish(null), CAPTION_TIMEOUT_MS);
+            captionCapture = { videoId, finish };
+            setCaptionsHidden(true);
+
+            try {
+                player.loadModule?.('captions');
+                // 자막 모듈이 뜬 뒤 플레이어 자막 목록에서 원하는 언어를 선택 (불러오는 순간 응답을 가로챔)
+                let track = null;
+                for (let i = 0; i < 25 && !track && captionCapture?.finish === finish; i++) {
+                    track = pickCaptionTrack(player.getOption?.('captions', 'tracklist') || [], langs);
+                    if (!track) await new Promise(r => setTimeout(r, 200));
+                }
+                if (captionCapture?.finish !== finish) return;
+                if (!track) return finish(null); // 직접 등록한 자막이 없음
+                lang = track.languageCode;
+                player.setOption?.('captions', 'track', track);
+            } catch (e) {
+                finish(null);
+            }
+        });
+    }
+
+    // ── 뮤직비디오 임베드 플레이어 안에서 실행되는 경우 ──
+    //    유튜브 뮤직 페이지가 숨겨진 임베드로 띄운 뮤직비디오의 자막을 추출해 부모 페이지로 전달
+    if (location.hostname === 'www.youtube.com') {
+        const match = (location.hash + '&' + location.search).match(/lyrics-widget=([^&#]*)/);
+        if (window.top === window.self || !match) return;
+        const langs = decodeURIComponent(match[1]).split(',').filter(Boolean);
+        const videoId = location.pathname.split('/embed/')[1]?.split(/[/?#]/)[0];
+        const reply = (result) => window.parent.postMessage({ lyricsWidgetCaptions: true, videoId, result }, 'https://music.youtube.com');
+
+        let tries = 0;
+        const waitPlayer = setInterval(() => {
+            const player = document.getElementById('movie_player');
+            if (player?.getOption && player.loadModule) {
+                clearInterval(waitPlayer);
+                capturePlayerCaptions(player, videoId, langs).then(reply);
+            } else if (++tries > 50) {
+                clearInterval(waitPlayer);
+                reply(null);
+            }
+        }, 200);
+        return;
+    }
+
+    // 다른 영상(뮤직비디오)을 숨겨진 임베드 플레이어로 띄워 자막 추출
+    const EMBED_TIMEOUT_MS = 12000;
+    function captureEmbedCaptions(videoId, langs) {
+        return new Promise(resolve => {
+            const iframe = document.createElement('iframe');
+            const done = (result) => {
+                clearTimeout(timer);
+                window.removeEventListener('message', onMessage);
+                iframe.remove();
+                resolve(result);
+            };
+            const onMessage = (e) => {
+                if (e.origin === 'https://www.youtube.com' && e.data?.lyricsWidgetCaptions && e.data.videoId === videoId) done(e.data.result);
+            };
+            const timer = setTimeout(() => done(null), EMBED_TIMEOUT_MS);
+            window.addEventListener('message', onMessage);
+
+            const lang = langs[0] || 'ko';
+            const marker = `lyrics-widget=${encodeURIComponent(langs.join(','))}`;
+            iframe.src = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&cc_lang_pref=${lang}&hl=${lang}&${marker}#${marker}`;
+            iframe.allow = 'autoplay';
+            iframe.style.cssText = 'position:fixed;left:-400px;top:-400px;width:320px;height:180px;opacity:0;pointer-events:none;border:0;';
+            document.documentElement.appendChild(iframe);
+        });
+    }
+
+    // 서버 요청: 재생 중인 영상의 자막 → 없으면 뮤직비디오 후보의 자막 순으로 시도
+    async function extractCaptions({ videoId, langs = [], candidates = [] }) {
+        let result = null;
+        const player = document.getElementById('movie_player');
+        if (player && player.getVideoData?.().video_id === videoId) {
+            // 곡 정보의 자막 목록에 직접 등록한 자막이 있을 때만 플레이어를 건드림
+            const listed = player.getPlayerResponse?.()?.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
+            if (pickCaptionTrack(listed, langs)) result = await capturePlayerCaptions(player, videoId, langs);
+        }
+        for (const candidate of candidates) {
+            if (result) break;
+            result = await captureEmbedCaptions(candidate, langs);
+            if (result) result.from = candidate;
+        }
+        postCaptions(videoId, result?.lyrics || null, result?.lang, result?.from);
+    }
 
     function parseTimeToMs(timeStr) {
         if (!timeStr) return 0;
@@ -43,6 +258,8 @@
             if (!albumArt) albumArt = bar.querySelector('.thumbnail-image-wrapper img, img')?.src || '';
         }
 
+        // 자동 생성 아티스트 채널은 "K/DA - Topic"처럼 " - Topic"이 붙음
+        artist = artist.replace(/\s+-\s+Topic$/i, '');
         return { title: title.trim(), artist: artist.trim(), album: album.trim(), albumArt, videoId: videoData.video_id || '' };
     }
 
@@ -131,6 +348,10 @@
     }
 
     function handleCommand(command) {
+        if (command.startsWith('captions:')) {
+            try { extractCaptions(JSON.parse(command.slice('captions:'.length))); } catch (e) { }
+            return;
+        }
         if (command === 'play-pause') {
             const video = document.querySelector('video.html5-main-video');
             const playing = navigator.mediaSession?.playbackState
@@ -172,6 +393,24 @@
     let watchdogTimer = null;
     let audioTicker = null;
 
+    // 🚨 볼륨 보정: 영상 볼륨은 분석기에 들어가기 전에 적용되므로, 유튜브 뮤직 볼륨을 줄이면 파형도 작아짐.
+    //    볼륨만큼 줄어든 데시벨(예: 50% → -6dB)만큼 분석 범위를 같이 내려서 볼륨과 관계없이 같은 파형을 보여줌.
+    //    (음소거·볼륨 0이면 분석할 소리 자체가 없으므로 보정 불가)
+    // 분석 범위: 기본값(-100 ~ -30dB)보다 15dB 위로 올림 → 베이스가 큰 곡도 저음역이 최대치(255)에 붙지 않음
+    //   (위젯이 15dB만큼 다시 더해 표시하므로 보통 음량의 막대 높이는 그대로, 큰 소리만 더 높이 올라감)
+    const BASE_MIN_DB = -85, BASE_MAX_DB = -15;
+    let compensatedVolume = 1;
+    function compensateVolume(volume) {
+        const v = Math.max(volume, 0.01);
+        if (Math.abs(v - compensatedVolume) < 0.001) return;
+        compensatedVolume = v;
+        const offset = 20 * Math.log10(v);
+        try {
+            analyser.minDecibels = BASE_MIN_DB + offset;
+            analyser.maxDecibels = BASE_MAX_DB + offset;
+        } catch (e) { }
+    }
+
     const connectWS = () => {
         if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
 
@@ -202,6 +441,7 @@
                 }
 
                 if (analyser && ws.readyState === WebSocket.OPEN && currentVideo && !currentVideo.paused) {
+                    compensateVolume(currentVideo.volume);
                     analyser.getByteFrequencyData(dataArray);
 
                     let hasAudio = false;

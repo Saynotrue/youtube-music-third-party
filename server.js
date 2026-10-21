@@ -1,23 +1,14 @@
-require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const WebSocket = require('ws');
-const { shell } = require('electron');
 
 const app = express();
 const PORT = process.env.PORT || 8888;
 const WS_PORT = 8889;
 
-// --- Spotify 설정 ---
-const { SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, REDIRECT_URI } = process.env;
-const SCOPES = 'user-read-playback-state user-read-currently-playing user-modify-playback-state';
-
-let currentService = 'youtube';
 let playerState = { playing: false };
 const commandClients = new Set();
 let rendererSocket = null;
-let accessToken = null;
-let refreshToken = null;
 
 app.use((req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
@@ -25,63 +16,6 @@ app.use((req, res, next) => {
     next();
 });
 app.use(express.json());
-
-// ─── 서비스 전환 및 인증 ────────────────────────────────
-app.post('/set-service', (req, res) => {
-    let needsSetup = false;
-    if (req.body.service) {
-        currentService = req.body.service;
-        if (currentService === 'spotify') {
-            if (!process.env.SPOTIFY_CLIENT_ID) needsSetup = true;
-            else if (!accessToken) shell.openExternal(`http://127.0.0.1:${PORT}/login`);
-        }
-    }
-    res.json({ ok: true, currentService, needsSetup });
-});
-
-function getSpotifyAuthHeader() {
-    const clientId = process.env.SPOTIFY_CLIENT_ID;
-    const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
-    if (!clientId || !clientSecret) return null;
-    const base64Credentials = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
-    return { Authorization: `Basic ${base64Credentials}`, 'Content-Type': 'application/x-www-form-urlencoded' };
-}
-
-async function refreshAccessToken() {
-    const header = getSpotifyAuthHeader();
-    if (!header || !refreshToken) return;
-    try {
-        const { data } = await axios.post('https://accounts.spotify.com/api/token',
-            new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken }),
-            { headers: header }
-        );
-        accessToken = data.access_token;
-    } catch (e) { }
-}
-
-app.get('/login', (req, res) => {
-    const clientId = process.env.SPOTIFY_CLIENT_ID;
-    const redirectUri = process.env.REDIRECT_URI || `http://127.0.0.1:${PORT}/callback`;
-    if (!clientId) return res.status(400).send('Spotify Client ID가 설정되지 않았습니다.');
-    res.redirect(`https://accounts.spotify.com/authorize?client_id=${clientId}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(SCOPES)}`);
-});
-
-app.get('/callback', async (req, res) => {
-    const redirectUri = process.env.REDIRECT_URI || `http://127.0.0.1:${PORT}/callback`;
-    const header = getSpotifyAuthHeader();
-    try {
-        const { data } = await axios.post('https://accounts.spotify.com/api/token',
-            new URLSearchParams({ grant_type: 'authorization_code', code: req.query.code, redirect_uri: redirectUri }),
-            { headers: header }
-        );
-        accessToken = data.access_token;
-        refreshToken = data.refresh_token;
-        res.send('<script>window.close()</script>');
-    } catch (e) {
-        const errData = e.response?.data ? JSON.stringify(e.response.data) : e.message;
-        res.status(500).send(`<div style="padding: 20px;"><h2>인증 실패 😢</h2><p>${errData}</p></div>`);
-    }
-});
 
 // ─── 미디어 제어 및 상태 동기화 ───────────────────────────
 app.get('/command-stream', (req, res) => {
@@ -95,44 +29,23 @@ function sendCommand(command) {
     for (const client of commandClients) client.write(`data: ${command}\n\n`);
 }
 
-app.post('/play-pause', async (req, res) => {
-    if (currentService === 'youtube') {
-        sendCommand('play-pause');
-        res.json({ ok: true });
-    } else if (currentService === 'spotify') {
-        try {
-            await axios.put(`https://api.spotify.com/v1/me/player/${req.body.playing ? 'pause' : 'play'}`, null, { headers: { Authorization: `Bearer ${accessToken}` } });
-            res.json({ ok: true });
-        } catch (e) { res.json({ ok: false }); }
-    }
+app.post('/play-pause', (req, res) => {
+    sendCommand('play-pause');
+    res.json({ ok: true });
 });
 
-app.post('/previous', async (req, res) => {
-    if (currentService === 'youtube') {
-        sendCommand('previous');
-        res.json({ ok: true });
-    } else if (currentService === 'spotify') {
-        try {
-            await axios.post('https://api.spotify.com/v1/me/player/previous', null, { headers: { Authorization: `Bearer ${accessToken}` } });
-            res.json({ ok: true });
-        } catch (e) { res.json({ ok: false }); }
-    }
+app.post('/previous', (req, res) => {
+    sendCommand('previous');
+    res.json({ ok: true });
 });
 
-app.post('/next', async (req, res) => {
-    if (currentService === 'youtube') {
-        sendCommand('next');
-        res.json({ ok: true });
-    } else if (currentService === 'spotify') {
-        try {
-            await axios.post('https://api.spotify.com/v1/me/player/next', null, { headers: { Authorization: `Bearer ${accessToken}` } });
-            res.json({ ok: true });
-        } catch (e) { res.json({ ok: false }); }
-    }
+app.post('/next', (req, res) => {
+    sendCommand('next');
+    res.json({ ok: true });
 });
 
 app.post('/update-state', (req, res) => {
-    if (currentService === 'youtube') playerState = req.body;
+    playerState = req.body;
     res.json({ ok: true });
 });
 
@@ -145,23 +58,43 @@ function cacheSet(map, key, value) {
     if (map.size > CACHE_MAX) map.delete(map.keys().next().value);
 }
 
-app.get('/current-track', async (req, res) => {
-    if (currentService === 'youtube') {
-        res.json(playerState);
-    } else if (currentService === 'spotify') {
-        if (!accessToken) return res.json({ playing: false });
-        try {
-            const { data } = await axios.get('https://api.spotify.com/v1/me/player', { headers: { Authorization: `Bearer ${accessToken}` } });
-            if (!data?.item) return res.json({ playing: false });
-            res.json({
-                playing: data.is_playing, title: data.item.name, artist: data.item.artists.map(a => a.name).join(', '),
-                album: data.item.album.name, albumArt: data.item.album.images[0]?.url, progress: data.progress_ms, duration: data.item.duration_ms,
-            });
-        } catch (e) {
-            if (e.response?.status === 401) await refreshAccessToken();
-            res.json({ playing: false });
-        }
+// ─── 유튜브 자막 (lrclib에 가사가 없을 때만 사용) ──────────
+// 서버가 유튜브에 직접 요청하지 않고, Tampermonkey에 요청 → 페이지의 플레이어가 자막을 불러오면 그 응답을 LRC로 변환해 보내줌
+const pageCaptions = new Map();       // videoId → LRC | null(자막 없음)
+const captionWaiters = new Map();     // videoId → [resolve, ...]
+const CAPTION_WAIT_MS = 30000; // 재생 중인 영상 → 뮤직비디오 후보(최대 2개)를 차례로 시도하는 시간
+
+function requestPageCaptions(videoId, langs, candidates) {
+    if (pageCaptions.has(videoId)) return Promise.resolve(pageCaptions.get(videoId));
+    if (commandClients.size === 0) return Promise.resolve(null); // 유튜브 뮤직 페이지가 연결되어 있지 않음
+    return new Promise(resolve => {
+        const waiting = captionWaiters.get(videoId);
+        if (waiting) { waiting.push(resolve); return; } // 이미 요청 중이면 같은 결과를 기다림
+        captionWaiters.set(videoId, [resolve]);
+        sendCommand(`captions:${JSON.stringify({ videoId, langs, candidates })}`);
+        setTimeout(() => resolveCaptionWaiters(videoId, null), CAPTION_WAIT_MS); // 응답이 없어도 '자막 없음'으로 확정하지 않음
+    });
+}
+
+function resolveCaptionWaiters(videoId, lyrics) {
+    const waiting = captionWaiters.get(videoId);
+    if (!waiting) return;
+    captionWaiters.delete(videoId);
+    waiting.forEach(resolve => resolve(lyrics));
+}
+
+app.post('/yt-captions', (req, res) => {
+    const { videoId, lyrics, lang, from } = req.body || {};
+    if (videoId) {
+        cacheSet(pageCaptions, videoId, lyrics || null);
+        console.log(lyrics ? `[가사 검색] 🎈 유튜브 자막 추출 성공 (Video ID: ${videoId}${from ? ` → 뮤직비디오 ${from}` : ''}, 자막: ${lang})` : `[가사 검색] 🎈 유튜브 자막 없음 (Video ID: ${videoId})`);
+        resolveCaptionWaiters(videoId, lyrics || null);
     }
+    res.json({ ok: true });
+});
+
+app.get('/current-track', (req, res) => {
+    res.json(playerState);
 });
 
 // 텍스트에서 가장 많이 쓰인 문자 체계로 언어 추정 (영문은 글자 단위라 음절 문자와 비슷한 비중이 되도록 보정)
@@ -178,6 +111,41 @@ function detectTextLang(text) {
 
 const normalize = (s) => (s || '').toLowerCase().replace(/[\s'"`‘’“”「」『』【】\[\]()（）|·・\-_:~!?.,]/g, '');
 
+// 같은 곡의 뮤직비디오 찾기 (유튜브 검색 결과 중 곡명이 들어간 영상, 아티스트 공식 채널 우선)
+const MV_EXCLUDE_KEYWORDS = /노래방|karaoke|커버|cover|inst\b|instrumental|reaction|리액션|piano|guitar|bass|drum|vietsub|싱크룸|직캠|fancam|teaser|티저|1시간|1hour|playlist|shorts/i;
+async function findMusicVideoIds(title, artist, excludeId) {
+    try {
+        const { data } = await axios.post('https://www.youtube.com/youtubei/v1/search?prettyPrint=false',
+            { context: { client: { clientName: 'WEB', clientVersion: '2.20260901.00.00', hl: 'ko', gl: 'KR' } }, query: `${title} ${artist}`.trim() },
+            { headers: { 'Content-Type': 'application/json' }, timeout: 5000 });
+
+        const videos = [];
+        (function walk(o) {
+            if (!o || typeof o !== 'object') return;
+            if (o.videoRenderer) {
+                const v = o.videoRenderer;
+                videos.push({ id: v.videoId, title: v.title?.runs?.map(r => r.text).join('') || '', owner: v.ownerText?.runs?.map(r => r.text).join('') || '' });
+                return;
+            }
+            for (const k in o) walk(o[k]);
+        })(data);
+
+        const nTitle = normalize(title);
+        const nArtist = normalize(artist);
+        return videos
+            .slice(0, 8)
+            .filter(v => v.id !== excludeId && normalize(v.title).includes(nTitle))
+            // 원곡 제목에 없는 커버/노래방/연주/티저 등의 키워드가 붙은 영상은 제외
+            .filter(v => !MV_EXCLUDE_KEYWORDS.test(v.title) || MV_EXCLUDE_KEYWORDS.test(title))
+            .sort((a, b) => Number(normalize(b.owner + b.title).includes(nArtist)) - Number(normalize(a.owner + a.title).includes(nArtist)))
+            .slice(0, 2)
+            .map(v => v.id);
+    } catch (err) {
+        console.error('[가사 검색] 뮤직비디오 검색 오류:', err.message);
+        return [];
+    }
+}
+
 // ─── 원곡 정보 추출 (커버 영상 제목 → 원곡 가수 / 원제) ─────────
 const JP_CHARS = /[ぁ-ゟァ-ヿ一-龥]/;
 const JP_SEGMENTS = /[ぁ-ゟァ-ヿ一-龥々〆ー・·]+/g;
@@ -187,12 +155,28 @@ const NON_SONG_GROUP = /cover|커버|ver\.?|version|official|m\/?v|live|라이�
 //     "푸름과 여름 (Mrs. GREEN APPLE) / 텐코 시부키 cover"     → 가수: Mrs. GREEN APPLE (원제는 검색으로 확인)
 //     "아이네 클라이네 (アイネクライネ : 요네즈 켄시) / ..."     → 후보: アイネクライネ / 요네즈 켄시
 //     "아 프리오리 (Mrs. GREEN APPLE「ア·プリオリ」) / ..."   → 후보: ア·プリオリ / Mrs. GREEN APPLE
+// 곡 정보와 커버 가수 사이의 구분선: " / ", " | ", "｜", "ㅣ" (ㅣ는 앞뒤 공백 없이 쓰이기도 함)
+// 괄호 밖의 구분선에서만 나눔 (예: "orion - [米津玄師 / 요네즈 켄시] ㅣ아카네 리제"의 괄호 안 " / "는 구분선이 아님)
+function splitTitleParts(title) {
+    const masked = title.replace(/[\[(（【][^\])）】]*[\])）】]/g, m => '\0'.repeat(m.length));
+    const parts = [];
+    let start = 0;
+    for (const m of masked.matchAll(/\s+[\/|｜]\s+|\s*ㅣ\s*/g)) {
+        parts.push(title.slice(start, m.index));
+        start = m.index + m[0].length;
+    }
+    parts.push(title.slice(start));
+    return parts;
+}
+
 function parseOriginalSong(title) {
     const tracks = [], artists = [], titles = [];
+    const artistOnly = new Set(); // 가수 이름으로 확정된 값 (곡명 후보에서 제외)
     const add = (list, v) => { v = (v || '').trim(); if (v && !list.includes(v)) list.push(v); };
 
     // "곡 정보 / 커버 가수" 형태이므로 커버 가수 부분(/, | 뒤)은 제외
-    const songPart = title.split(/\s+[\/|｜]\s+/)[0];
+    // "ㅣ"(한글 모음)를 구분선으로 쓰는 경우도 있음 (예: "orion - [米津玄師] ㅣ아카네 리제 【COVER】")
+    const songPart = splitTitleParts(title)[0];
     const groups = [...songPart.matchAll(/[\[(（【]([^\])）】]+)[\])）】]/g)].map(m => m[1].trim());
     for (const g of groups) {
         if (NON_SONG_GROUP.test(g) && !JP_CHARS.test(g)) continue;
@@ -201,6 +185,12 @@ function parseOriginalSong(title) {
         if (quoted) {
             add(tracks, quoted[1]);
             add(artists, g.replace(quoted[0], ''));
+            continue;
+        }
+        // "[米津玄師 / 요네즈 켄시]"처럼 같은 가수를 표기만 달리해 나열한 경우 → 가수만
+        const names = g.split(/\s+[\/／]\s+/).map(s => s.trim()).filter(Boolean);
+        if (names.length >= 2 && !/\s[-–]\s|[:：]/.test(g)) {
+            names.forEach(n => { add(artists, n); artistOnly.add(n); });
             continue;
         }
         // "가수 - 곡명" / "곡명 : 가수" 등 순서가 제각각이므로 양쪽 모두 후보로 사용
@@ -213,7 +203,8 @@ function parseOriginalSong(title) {
     }
 
     // 괄호 밖의 "곡명 - 가수" (예: "라일락[ライラック] - Mrs. GREEN APPLE")
-    const outside = songPart.replace(/[\[(（【][^\])）】]*[\])）】]/g, ' ').replace(/\s+/g, ' ').trim();
+    const outside = songPart.replace(/[\[(（【][^\])）】]*[\])）】]/g, ' ').replace(/\s+/g, ' ')
+        .replace(/^[\s\-–~:]+|[\s\-–~:]+$/g, '').trim(); // 괄호를 빼고 남은 "orion -"의 "-" 제거
     const outsideParts = outside.split(/\s+[-–]\s+/).map(s => s.trim()).filter(Boolean);
     if (outsideParts.length === 2) outsideParts.forEach(p => add(artists, p));
     // 괄호를 뺀 곡명 후보 (예: "W/X/Y", "Henceforth - Orangestar" → Henceforth / Orangestar, "푸름과 여름")
@@ -225,7 +216,7 @@ function parseOriginalSong(title) {
     // 괄호 밖에 있는 일본어 원제도 후보로 추가
     for (const seg of songPart.match(JP_SEGMENTS) || []) add(tracks, seg);
 
-    return { tracks: tracks.filter(t => JP_CHARS.test(t)), artists, titles: titles.filter(t => !tracks.includes(t)) };
+    return { tracks: tracks.filter(t => JP_CHARS.test(t) && !artistOnly.has(t)), artists, titles: titles.filter(t => !tracks.includes(t)) };
 }
 
 // 제목에 원제가 없을 때(예: "푸름과 여름"): 유튜브 검색 결과 제목들에 함께 적힌 일본어 원제 중 가장 많이 나온 것을 사용
@@ -330,6 +321,8 @@ app.get('/lyrics', async (req, res) => {
     let cleanArtist = artist || '';
     if (cleanArtist) {
         // 예: "지코 및 Lilas" -> "지코"
+        // 자동 생성 아티스트 채널의 " - Topic" 제거 (예: "K/DA - Topic" → "K/DA")
+        cleanArtist = cleanArtist.replace(/\s+-\s+Topic$/i, '');
         cleanArtist = cleanArtist.split(/ 및 | & |, | feat\.? | ft\.? /i)[0].trim();
     }
 
@@ -374,7 +367,7 @@ app.get('/lyrics', async (req, res) => {
     // 유튜브 뮤직 가수 이름은 "hebi. 헤비", "아오쿠모 린 AOKUMO RIN"처럼 표기가 섞여 있어 lrclib에서 검색되지 않으므로 표기별로 분리
     // 제목의 커버 가수 부분 (예: "アスノヨゾラ哨戒班 / Hebi. cover" → "Hebi", "… | 아라하시 타비 ARAHASHI TABI cover")
     // 유튜브 뮤직 가수 이름은 한글만 있는 경우(예: "헤비")가 있어 lrclib의 영문 표기와 맞추려면 제목 쪽 이름이 필요
-    const titleCoverArtist = (title.split(/\s+[\/|｜]\s+/).slice(1).join(' ') || '')
+    const titleCoverArtist = (splitTitleParts(title).slice(1).join(' ') || '')
         .replace(/[\[(（【][^\])）】]*[\])）】]/g, ' ')
         .replace(/\b(covered\s+by|cover(ed)?|歌ってみた|official|mv|m\/v|live|ver\.?|version)\b|커버|불러보았다/gi, ' ')
         .replace(/\s+/g, ' ').trim();
@@ -465,6 +458,10 @@ app.get('/lyrics', async (req, res) => {
     const MAX_LRCLIB_REQUESTS = 14;
     const tried = new Set();
     let fallbackMatch = null; // 가수가 확인되지 않은 결과 (가수 일치 결과가 끝내 없을 때만 사용)
+    let searchFailed = false; // lrclib 과부하(503) 등으로 검색 하나라도 실패했는지
+    let lengthMismatch = null; // 가수는 맞지만 길이가 크게 다른 결과 (예: 티저/짧은 버전. 끝내 다른 결과가 없을 때만 사용)
+    // 후보가 여럿이면 재생 중인 곡과 길이가 가장 가까운 것 우선 (같은 곡의 다른 버전/커버/티저 구분)
+    const byDuration = (a, b) => playingSec ? Math.abs((a.duration || 1e9) - playingSec) - Math.abs((b.duration || 1e9) - playingSec) : 0;
     for (const [params, expectLang] of queries) {
         const key = JSON.stringify(params);
         if (tried.has(key)) continue;
@@ -472,27 +469,48 @@ app.get('/lyrics', async (req, res) => {
         tried.add(key);
         try {
             const results = await searchLrclib(params);
-            const bestMatch = findBestLyrics(results.filter(artistMatches), expectLang, params.track_name)
-                || (knownArtists.length === 0 ? findBestLyrics(results, expectLang, params.track_name) : null);
+            const candidates = (knownArtists.length > 0 ? results.filter(artistMatches) : results).sort(byDuration);
+            const bestMatch = findBestLyrics(candidates.filter(durationClose), expectLang, params.track_name);
             if (bestMatch) {
                 console.log(`[가사 검색] 📜 lrclib 가사 사용 (${bestMatch.trackName} / ${bestMatch.artistName})`);
                 return res.json({ lyrics: bestMatch.syncedLyrics, source: 'lrclib' });
             }
-            // 후보가 여럿이면 재생 중인 곡과 길이가 가장 가까운 것 우선 (같은 곡의 다른 버전/커버 구분)
-            const byDuration = (a, b) => playingSec ? Math.abs((a.duration || 1e9) - playingSec) - Math.abs((b.duration || 1e9) - playingSec) : 0;
+            if (!lengthMismatch) lengthMismatch = findBestLyrics(candidates, expectLang, params.track_name);
             if (!fallbackMatch) fallbackMatch = findBestLyrics(results.filter(isSafeFallback).sort(byDuration), expectLang, params.track_name);
         } catch (e) {
+            searchFailed = true;
             console.error("가사 검색 실패:", e.message);
         }
     }
 
     // 원곡 가수를 확인하지 못했지만 곡명이 일치하는 가사 (예: 가수 표기가 한국어/일본어로 달라 매칭 실패)
+    // 검색 실패가 있었으면 정확한 결과를 놓쳤을 수 있으므로 불확실한 결과(가수 미확인/길이 다름)나 자막으로 확정하지 않고
+    // 위젯이 잠시 뒤 다시 요청하게 함 (예: "orion / 米津玄師" 검색이 503 → 같은 이름의 다른 가수 곡 "Orion / Glenn Hughes"가 선택됨)
+    if (searchFailed && (fallbackMatch || lengthMismatch)) {
+        console.log('[가사 검색] ⏳ lrclib 검색 일부 실패 → 불확실한 결과는 보류하고 다시 시도');
+        return res.json({ lyrics: null, source: null, retry: true });
+    }
+
     if (fallbackMatch) {
         console.log(`[가사 검색] 📜 lrclib 가사 사용 - 가수 미확인 (${fallbackMatch.trackName} / ${fallbackMatch.artistName})`);
         return res.json({ lyrics: fallbackMatch.syncedLyrics, source: 'lrclib' });
     }
+    if (lengthMismatch) {
+        console.log(`[가사 검색] 📜 lrclib 가사 사용 - 곡 길이 다름 (${lengthMismatch.trackName} / ${lengthMismatch.artistName}, ${lengthMismatch.duration}s)`);
+        return res.json({ lyrics: lengthMismatch.syncedLyrics, source: 'lrclib' });
+    }
 
     console.log(`[가사 검색] ❌ lrclib에서 가사를 찾지 못함 (검색어: ${[...tried].map(k => Object.values(JSON.parse(k)).join(' / ')).join(' | ')})`);
+
+    // [마지막] 유튜브 자막: 지금 재생 중인 영상만 가능 (페이지의 플레이어가 자막을 불러와야 하므로)
+    //   자막 언어는 제목 → 가수 이름의 언어 순으로 우선 (예: 제목이 일본어면 일본어 자막)
+    if (videoId && playerState.videoId === videoId) {
+        const langs = [...new Set([detectTextLang(title), detectTextLang(cleanArtist)].filter(Boolean))];
+        // 공식 음원(자동 생성 음원 영상)은 자막이 없는 경우가 많으므로 같은 곡의 뮤직비디오도 후보로 전달
+        const candidates = pageCaptions.has(videoId) ? [] : await findMusicVideoIds(cleanTitle, cleanArtist, videoId);
+        const lyrics = await requestPageCaptions(videoId, langs, candidates);
+        if (lyrics) return res.json({ lyrics, source: 'youtube' });
+    }
 
     res.json({ lyrics: null, source: null });
 });
@@ -507,7 +525,7 @@ wss.on('connection', (ws) => {
             if (data.type === 'register_renderer') {
                 rendererSocket = ws;
             } else if (data.type === 'eq_data' && rendererSocket && rendererSocket.readyState === WebSocket.OPEN) {
-                if (currentService === 'youtube') rendererSocket.send(JSON.stringify(data));
+                rendererSocket.send(JSON.stringify(data));
             }
         } catch (e) { }
     });

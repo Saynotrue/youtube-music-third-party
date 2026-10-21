@@ -25,7 +25,6 @@ let lastAlbumImg = null;
 //  2. 앱 설정 (Config) 초기화 및 관리
 // ═════════════════════════════════════════════════════════════
 let appConfig = {
-    isPro: false,
     opacity: 1.0,
     autoFade: false,
     theme: 'auto',
@@ -33,19 +32,16 @@ let appConfig = {
     alwaysOnTop: true,
     globalShortcut: true,
     widgetStyle: 'eq',
-    trayIcon: 'player',
-    musicService: 'youtube'
+    trayIcon: 'player'
 };
 
 function initSettings() {
     const saved = localStorage.getItem('lyricsBarSettings');
-    if (saved) appConfig = { ...appConfig, ...JSON.parse(saved) };
-
-    fetch('http://127.0.0.1:8888/set-service', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ service: appConfig.musicService })
-    }).catch(e => console.error("서버 초기화 에러:", e));
+    if (saved) {
+        // 예전 버전에서 저장된 Pro/Spotify 설정값은 버림
+        const { isPro, musicService, ...rest } = JSON.parse(saved);
+        appConfig = { ...appConfig, ...rest };
+    }
 
     applyConfigToUI();
     applyConfigToApp();
@@ -596,7 +592,8 @@ async function fetchLyrics(title, artist, album, videoId = null, retryCount = 0)
             lastLyricIdx = -1;
         } else {
             // 🚨 2. 재시도할 때도 videoId를 잊지 않고 넘겨줍니다.
-            if (retryCount < 2) { setTimeout(() => fetchLyrics(title, artist, album, videoId, retryCount + 1), 2000); return; }
+            // 서버가 lrclib 검색 실패로 결과를 보류한 경우(retry)는 과부하가 풀리도록 조금 더 기다렸다가 재시도
+            if (retryCount < 2) { setTimeout(() => fetchLyrics(title, artist, album, videoId, retryCount + 1), res.retry ? 5000 : 2000); return; }
             updateLyrics('', '가사 없음', '');
         }
     } catch (e) {
@@ -607,6 +604,34 @@ async function fetchLyrics(title, artist, album, videoId = null, retryCount = 0)
     } finally {
         isFetchingLyrics = false;
     }
+}
+
+// 괄호 밖의 구분선에서만 나눔 (예: "orion - [米津玄師 / 요네즈 켄시] ㅣ아카네 리제"의 괄호 안 " / "는 구분선이 아님)
+function splitTitleParts(title) {
+    const masked = title.replace(/[\[(（【][^\])）】]*[\])）】]/g, m => '\0'.repeat(m.length));
+    const parts = [];
+    let start = 0;
+    for (const m of masked.matchAll(/\s+[\/|｜]\s+|\s*ㅣ\s*/g)) {
+        parts.push(title.slice(start, m.index));
+        start = m.index + m[0].length;
+    }
+    parts.push(title.slice(start));
+    return parts;
+}
+
+// 화면에 보여줄 곡 제목: 일반 영상(커버 등)은 "orion - [米津玄師 / 요네즈 켄시] ㅣ아카네 리제 【COVER】"처럼
+// 영상 제목 전체가 오므로 곡명만 남김. 구분선이나 [ ], 【 】가 없는 제목(공식 음원 등)은 그대로 둠
+function displayTitle(title) {
+    const raw = (title || '').trim();
+    if (!/\s[\/|｜]\s|ㅣ|[\[【]/.test(raw)) return raw;
+    const songPart = splitTitleParts(raw)[0];
+    const cleaned = songPart
+        .replace(/\[[^\]]*\]|【[^】]*】/g, ' ')
+        .replace(/[(（][^)）]*(cover|커버|official|m\/?v|live|라이브|ver\.?|version|歌ってみた)[^)）]*[)）]/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .replace(/^[\s\-–~:]+|[\s\-–~:]+$/g, '')
+        .trim();
+    return cleaned || raw;
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -716,13 +741,7 @@ async function syncWithServer() {
         }
 
         // 🚨 이퀄라이저 생존 정밀 확인: 단순히 변수 유무가 아니라 실제 연결 상태(OPEN)까지 체크
-        if (appConfig.musicService === 'youtube') {
-            if (!wsClient || wsClient.readyState !== WebSocket.OPEN) {
-                startEQ();
-            }
-        } else {
-            stopEQ(); // 스포티파이 모드일 때는 확실하게 꺼줌
-        }
+        if (!wsClient || wsClient.readyState !== WebSocket.OPEN) startEQ();
 
         document.getElementById('btn-play-pause').textContent = '⏸';
         const lpPlayBtn = document.getElementById('lp-btn-play');
@@ -772,11 +791,11 @@ async function syncWithServer() {
 
                 await new Promise(r => setTimeout(r, 400));
 
-                document.getElementById('title').textContent = track.title;
+                document.getElementById('title').textContent = displayTitle(track.title);
                 document.getElementById('artist').textContent = track.artist || 'Unknown Artist';
                 const lpTitle = document.getElementById('lp-widget-title');
                 const lpArtist = document.getElementById('lp-widget-artist');
-                if (lpTitle) lpTitle.textContent = track.title;
+                if (lpTitle) lpTitle.textContent = displayTitle(track.title);
                 if (lpArtist) lpArtist.textContent = track.artist || 'Unknown Artist';
 
                 if (trackInfo && lyricsContainer) { trackInfo.classList.remove('fade'); lyricsContainer.classList.remove('fade'); }
@@ -872,16 +891,12 @@ async function syncWithServer() {
         }
 
         // 마지막으로 이퀄라이저 실행 재확인
-        if (appConfig.musicService === 'youtube') {
-            if (!wsClient || wsClient.readyState !== WebSocket.OPEN) startEQ();
-        }
+        if (!wsClient || wsClient.readyState !== WebSocket.OPEN) startEQ();
 
     } catch (e) {
         console.error('동기화 실패:', e);
         // 에러 발생 시 세션 재연결 시도
-        if (appConfig.musicService === 'youtube') {
-            if (!wsClient || wsClient.readyState !== WebSocket.OPEN) startEQ();
-        }
+        if (!wsClient || wsClient.readyState !== WebSocket.OPEN) startEQ();
     }
 }
 
@@ -966,6 +981,9 @@ function startEQ() {
         const STIFFNESS = 0.25;
         const DAMPING = 0.65;
 
+        // 분석 범위를 올린 만큼(15dB = 255 / 70dB × 15)의 값, 막대 최대 높이 (기본 16px의 배수, 바 높이 44px 안에 들어가도록)
+        const EQ_HEADROOM = 255 / 70 * 15;
+        const EQ_MAX_SCALE = 2.3;
         function renderVisualizer() {
             if (!isPlaying) {
                 latestEqData = new Array(10).fill(0);
@@ -989,7 +1007,9 @@ function startEQ() {
             }
 
             bars.forEach((bar, index) => {
-                let targetValue = (latestEqData[index] || 0) * 0.5;
+                // Tampermonkey가 분석 범위를 15dB 올려 보내므로 그만큼 더해 원래 높이로 복원 (255를 넘는 값 = 예전엔 최대치에 붙던 큰 소리)
+                const raw = latestEqData[index] || 0;
+                let targetValue = (raw > 0 ? raw + EQ_HEADROOM : 0) * 0.5;
                 let diff = targetValue - currentValues[index];
                 velocities[index] += diff * STIFFNESS;
                 velocities[index] *= DAMPING;
@@ -1002,14 +1022,14 @@ function startEQ() {
                     isAnimating = true;
                 }
 
-                let value = Math.max(0, Math.min(currentValues[index], 180));
+                let value = Math.max(0, currentValues[index]);
 
                 if (visualizerMode === 'BARS') {
                     let baseScale = Math.max(0.2, (value / 255) * 1.75);
                     let boostMultiplier = 1 + (index / (bars.length - 1)) * 1.5;
                     if (index === 0) boostMultiplier *= 1.8;
                     if (index === 1) boostMultiplier *= 1.6;
-                    bar.style.transform = `scaleY(${Math.min(baseScale * boostMultiplier, 1.8)})`;
+                    bar.style.transform = `scaleY(${Math.min(baseScale * boostMultiplier, EQ_MAX_SCALE)})`;
                 } else {
                     let totalVolume = currentValues.reduce((a, b) => a + b, 0);
                     bar.style.transform = `scaleY(1) translateY(${Math.sin((Date.now() / 150) + index) * ((totalVolume / 10 / 25) + 2)}px)`;
@@ -1071,43 +1091,9 @@ function stopEQ() {
 //  8. ⚙️ UI 업데이트 및 설정 모달 이벤트 바인딩
 // ═════════════════════════════════════════════════════════════
 function applyConfigToUI() {
-    document.body.setAttribute('data-service', appConfig.musicService);
-    document.querySelectorAll('.service-pills .theme-pill').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.service === appConfig.musicService);
-    });
-
-    const allSettings = document.querySelectorAll('.settings-section, .setting-item');
-    const proSections = Array.from(allSettings).filter(sec => sec.querySelector('.pro-badge'));
-    const licenseSection = document.getElementById('license-section');
-    const statusEl = document.getElementById('license-status');
-    const resetBtn = document.getElementById('license-reset');
-
-    if (appConfig.isPro) {
-        if (statusEl) { statusEl.textContent = 'PRO Active'; statusEl.style.color = appConfig.musicService === 'youtube' ? '#FF0000' : '#1DB954'; }
-        if (resetBtn) resetBtn.style.display = 'block';
-        if (licenseSection) licenseSection.style.display = 'none';
-        proSections.forEach(sec => sec.classList.remove('section-disabled'));
-    } else {
-        if (statusEl) { statusEl.textContent = 'Free'; statusEl.style.color = 'rgba(255,255,255,0.38)'; }
-        if (resetBtn) resetBtn.style.display = 'none';
-        if (licenseSection) licenseSection.style.display = 'block';
-        proSections.forEach(sec => sec.classList.add('section-disabled'));
-    }
-
     const autoFadeToggle = document.getElementById('auto-fade-toggle');
-    if (autoFadeToggle) {
-        const autoFadeSection = autoFadeToggle.closest('.settings-section, .setting-item');
-        if (appConfig.musicService === 'youtube') {
-            autoFadeToggle.disabled = true;
-            if (autoFadeSection) { autoFadeSection.style.opacity = '0.4'; autoFadeSection.style.pointerEvents = 'none'; }
-            disableAutoFade();
-        } else {
-            autoFadeToggle.disabled = false;
-            if (autoFadeSection && appConfig.isPro) { autoFadeSection.style.opacity = '1'; autoFadeSection.style.pointerEvents = 'auto'; }
-            if (appConfig.autoFade && appConfig.isPro) enableAutoFade();
-        }
-        autoFadeToggle.checked = appConfig.autoFade;
-    }
+    if (autoFadeToggle) autoFadeToggle.checked = appConfig.autoFade;
+    if (appConfig.autoFade) enableAutoFade(); else disableAutoFade();
 
     const opacitySlider = document.getElementById('opacity-slider');
     if (opacitySlider) {
@@ -1127,7 +1113,7 @@ function applyConfigToUI() {
 }
 
 function applyConfigToApp() {
-    if (!appConfig.autoFade || appConfig.musicService === 'youtube') {
+    if (!appConfig.autoFade) {
         const barMode = document.getElementById('bar-mode');
         const lpMode = document.getElementById('lp-mode');
         if (barMode) barMode.style.opacity = appConfig.opacity;
@@ -1147,6 +1133,7 @@ function applyConfigToApp() {
 function scheduleFade() {
     clearTimeout(fadeTimer);
     fadeTimer = setTimeout(() => {
+        if (isFullscreen) return; // 전체화면에서는 흐리게 하지 않음
         const bar = document.getElementById('bar');
         if (bar) { bar.style.transition = 'background 1.5s ease, opacity 1.2s ease'; bar.style.opacity = '0.65'; }
     }, 3000);
@@ -1170,35 +1157,6 @@ function disableAutoFade() {
     const bar = document.getElementById('bar');
     if (bar) { bar.style.transition = 'background 1.5s ease, opacity 0.15s ease'; bar.style.opacity = appConfig.opacity; }
     document.getElementById('opacity-section')?.classList.remove('section-disabled');
-}
-
-document.getElementById('license-activate')?.addEventListener('click', () => {
-    const key = document.getElementById('license-input').value.trim();
-    if (key.startsWith('PRO-')) {
-        appConfig.isPro = true; document.getElementById('license-error')?.style.setProperty('opacity', '0');
-        saveSettings(); applyConfigToUI();
-    } else {
-        const errEl = document.getElementById('license-error');
-        if (errEl) { errEl.style.opacity = '1'; setTimeout(() => errEl.style.opacity = '0', 3000); }
-    }
-});
-
-document.getElementById('license-reset')?.addEventListener('click', () => {
-    appConfig.isPro = false; appConfig.theme = 'auto';
-    saveSettings(); applyConfigToUI();
-});
-
-window.changeService = async function (service) {
-    appConfig.musicService = service;
-    saveSettings(); applyConfigToUI();
-    if (service === 'spotify') stopEQ(); else if (service === 'youtube') startEQ();
-
-    const res = await fetch('http://127.0.0.1:8888/set-service', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ service: service })
-    }).then(r => r.json());
-
-    syncWithServer();
-    if (res.needsSetup) ipcRenderer.send('open-setup-window');
 }
 
 document.getElementById('opacity-slider')?.addEventListener('input', (e) => {
