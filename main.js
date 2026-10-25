@@ -1,4 +1,4 @@
-const { app, BrowserWindow, screen, Tray, Menu, nativeImage, nativeTheme, globalShortcut, ipcMain } = require('electron');
+const { app, BrowserWindow, screen, Tray, Menu, nativeImage, nativeTheme, globalShortcut, ipcMain, powerSaveBlocker } = require('electron');
 const path = require('path');
 
 // ─── 전역 창 참조 및 상태 ────────────────────────────────
@@ -208,6 +208,18 @@ ipcMain.on('toggle-fullscreen', (event, isFullscreen) => {
         setWindowFullScreen(false);
         win.setSkipTaskbar(true);
         win.setAlwaysOnTop(true, 'screen-saver');
+    }
+});
+
+// ─── 잠자기 방지 ─────────────────────────────────────────
+// 음악이 재생 중일 때만 화면이 꺼지거나 잠자기(대기 모드)에 들어가지 않게 막음 (일시정지하면 다시 허용)
+let sleepBlockerId = null;
+ipcMain.on('playback-state', (event, playing) => {
+    if (playing && sleepBlockerId === null) {
+        sleepBlockerId = powerSaveBlocker.start('prevent-display-sleep');
+    } else if (!playing && sleepBlockerId !== null) {
+        powerSaveBlocker.stop(sleepBlockerId);
+        sleepBlockerId = null;
     }
 });
 
