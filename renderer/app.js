@@ -15,6 +15,14 @@ let lastLyricCheckTime = 0;
 let localProgress = 0;
 let lastSyncTime = null;
 let isPlaying = false;
+
+// 재생 상태를 메인 프로세스에 알림 → 재생 중에는 Mac/PC가 잠자기(대기 모드)에 들어가지 않게 막음 (바뀔 때만 전송)
+let reportedPlaying = null;
+function reportPlaybackState(playing) {
+    if (playing === reportedPlaying) return;
+    reportedPlaying = playing;
+    ipcRenderer.send('playback-state', playing);
+}
 let trackDuration = 0;
 
 // 애니메이션/테마 상태
@@ -32,7 +40,8 @@ let appConfig = {
     alwaysOnTop: true,
     globalShortcut: true,
     widgetStyle: 'eq',
-    trayIcon: 'player'
+    trayIcon: 'player',
+    showLyrics: false // 전체화면 가사 창 (기본: 숨김 → 곡 정보가 가운데)
 };
 
 function initSettings() {
@@ -359,6 +368,10 @@ function applyGradient(imgEl) {
         document.documentElement.style.setProperty('--ui-glow', 'rgba(0, 0, 0, 0.2)'); // 검은 네온 그림자
         document.documentElement.style.setProperty('--ui-glow-dim', 'rgba(0, 0, 0, 0.1)');
         document.documentElement.style.setProperty('--ui-bg', 'rgba(0, 0, 0, 0.15)');
+        // 아이콘 버튼·소리 슬라이더 배경: 밝은 화면에서는 흰색 반투명 (검정을 섞으면 진한 갈색 얼룩처럼 보임)
+        document.documentElement.style.setProperty('--ui-surface', 'rgba(255, 255, 255, 0.4)');
+        document.documentElement.style.setProperty('--ui-surface-hover', 'rgba(255, 255, 255, 0.3)');
+        document.documentElement.style.setProperty('--ui-surface-active', 'rgba(255, 255, 255, 0.45)');
     } else {
         document.documentElement.style.setProperty('--ui-primary', '#ffffff');
         document.documentElement.style.setProperty('--ui-secondary', 'rgba(255, 255, 255, 0.6)');
@@ -366,6 +379,9 @@ function applyGradient(imgEl) {
         document.documentElement.style.setProperty('--ui-glow', 'rgba(255, 255, 255, 0.8)'); // 하얀 네온 그림자
         document.documentElement.style.setProperty('--ui-glow-dim', 'rgba(255, 255, 255, 0.5)');
         document.documentElement.style.setProperty('--ui-bg', 'rgba(255, 255, 255, 0.15)');
+        document.documentElement.style.setProperty('--ui-surface', 'rgba(36, 36, 36, 0.5)');
+        document.documentElement.style.setProperty('--ui-surface-hover', 'rgba(255, 255, 255, 0.1)');
+        document.documentElement.style.setProperty('--ui-surface-active', 'rgba(255, 255, 255, 0.18)');
     }
 
     document.documentElement.style.setProperty('--theme-color', `rgb(${color})`);
@@ -621,8 +637,13 @@ function splitTitleParts(title) {
 
 // 화면에 보여줄 곡 제목: 일반 영상(커버 등)은 "orion - [米津玄師 / 요네즈 켄시] ㅣ아카네 리제 【COVER】"처럼
 // 영상 제목 전체가 오므로 곡명만 남김. 구분선이나 [ ], 【 】가 없는 제목(공식 음원 등)은 그대로 둠
+// 따옴표로 감싼 곡명 (서버 parseOriginalSong과 같은 기준. 예: "네네코 마시로(Neneko Mashiro) | ‘봄꿈’" → 봄꿈)
+const QUOTED_TITLE = /(?:^|[\s|ㅣ｜/])[‘'"“]([^’'"”]{1,60})[’'"”](?=$|[\s|ㅣ｜/,])/;
+
 function displayTitle(title) {
     const raw = (title || '').trim();
+    const quoted = raw.match(QUOTED_TITLE);
+    if (quoted) return quoted[1].trim();
     if (!/\s[\/|｜]\s|ㅣ|[\[【]/.test(raw)) return raw;
     const songPart = splitTitleParts(raw)[0];
     const cleaned = songPart
@@ -646,12 +667,138 @@ if (btnFullscreen) {
     btnFullscreen.addEventListener('click', toggleFullscreen);
 }
 
+// 전체화면 가사 버튼: 가사 창 보이기/숨기기 (모서리가 둥근 사각형 말풍선 안에 가사 줄 모양 아이콘)
+const btnLyrics = document.getElementById('btn-lyrics');
+if (btnLyrics) {
+    btnLyrics.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h10a4 4 0 0 1 4 4v7a4 4 0 0 1-4 4h-6l-5 3.5V18a4 4 0 0 1-3-3.9V7a4 4 0 0 1 4-4z"/><path d="M8 8.5h8M8 12.5h5"/></svg>`;
+    btnLyrics.addEventListener('click', () => {
+        appConfig.showLyrics = !appConfig.showLyrics;
+        saveSettings();
+        lastLyricIdx = -1; // 다시 보일 때 현재 가사로 바로 갱신
+    });
+}
+
+// ─── 전체화면 소리 조절 버튼: 마우스를 올리면 세로 슬라이더가 열리고, 클릭하면 음소거/해제 ───
+// 아이콘 하나에 모든 부분(스피커, 음파 3개, 음소거 X)을 넣어 두고 볼륨에 따라 CSS로 부드럽게 보이기/숨기기
+//   음파 3개는 볼륨 1~33 / 34~66 / 67~100 구간에서 각각 볼륨에 비례해 점점 나타남 (--w1~--w3 = 0~1)
+const VOLUME_ICON = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M11 5 6 9H3v6h3l5 4V5z"/>
+    <path class="vol-wave vol-wave1" d="M14.5 9.5a3.5 3.5 0 0 1 0 5"/>
+    <path class="vol-wave vol-wave2" d="M17 7a7 7 0 0 1 0 10"/>
+    <path class="vol-wave vol-wave3" d="M19.5 4.5a10.5 10.5 0 0 1 0 15"/>
+    <path class="vol-mute" d="m16 9 5 6M21 9l-5 6"/>
+</svg>`;
+const VOLUME_WAVE_RANGES = [[0, 33], [33, 66], [66, 100]];
+const btnVolume = document.getElementById('btn-volume');
+const volumePopover = document.getElementById('volume-popover');
+const volumeSlider = document.getElementById('volume-slider');
+const volumeValue = document.getElementById('volume-value');
+let ytVolume = 100;
+let ytMuted = false;
+let volumeChangedAt = 0;   // 위젯에서 바꾼 직후에는 유튜브 뮤직에서 온 (바꾸기 전) 값으로 되돌리지 않음
+let volumeSendTimer = null;
+let lastVolumeSentAt = 0;
+
+function renderVolume() {
+    const v = ytMuted ? 0 : ytVolume;
+    if (btnVolume) {
+        if (!btnVolume.querySelector('svg')) btnVolume.innerHTML = VOLUME_ICON;
+        btnVolume.dataset.level = v === 0 ? 'mute' : 'on';
+        VOLUME_WAVE_RANGES.forEach(([from, to], i) => {
+            const amount = Math.max(0, Math.min(1, (v - from) / (to - from)));
+            btnVolume.style.setProperty(`--w${i + 1}`, amount.toFixed(2));
+        });
+    }
+    if (volumeSlider) {
+        if (Number(volumeSlider.value) !== v) volumeSlider.value = v;
+        volumeSlider.style.setProperty('--vol', `${v}%`); // 채워진 부분 표시
+    }
+    if (volumeValue) volumeValue.textContent = v;
+}
+
+// 드래그 중 너무 자주 보내지 않도록 최대 0.08초에 한 번 (마지막 값은 꼭 보냄)
+function sendVolume(volume) {
+    clearTimeout(volumeSendTimer);
+    const post = () => {
+        lastVolumeSentAt = Date.now();
+        fetch('http://127.0.0.1:8888/volume', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ volume })
+        }).catch(() => { });
+    };
+    const wait = 80 - (Date.now() - lastVolumeSentAt);
+    if (wait <= 0) post(); else volumeSendTimer = setTimeout(post, wait);
+}
+
+function setVolumeFromWidget(volume) {
+    ytVolume = Math.max(0, Math.min(100, Math.round(volume)));
+    ytMuted = false;
+    volumeChangedAt = Date.now();
+    renderVolume();
+    sendVolume(ytVolume);
+}
+
+// 유튜브 뮤직에서 바꾼 볼륨도 슬라이더에 반영 (syncWithServer에서 호출)
+function applyRemoteVolume(track) {
+    if (typeof track.volume !== 'number' || Date.now() - volumeChangedAt < 2000) return;
+    ytVolume = Math.round(track.volume);
+    ytMuted = !!track.muted;
+    renderVolume();
+}
+
+// 음소거/해제 (해제하면 음소거 전 볼륨으로 돌아감)
+function toggleMute() {
+    ytMuted = !ytMuted;
+    volumeChangedAt = Date.now();
+    if (!ytMuted && ytVolume === 0) {
+        setVolumeFromWidget(50); // 볼륨 0에서 해제하면 들리도록 50으로 (볼륨을 올리면 유튜브 뮤직도 음소거가 풀림)
+        return;
+    }
+    renderVolume();
+    fetch('http://127.0.0.1:8888/mute', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ muted: ytMuted })
+    }).catch(() => { });
+}
+
+function setVolumePopover(open) {
+    volumePopover?.classList.toggle('open', open);
+}
+
+if (btnVolume && volumePopover && volumeSlider) {
+    renderVolume();
+    btnVolume.addEventListener('click', toggleMute);
+    // 버튼이나 슬라이더 위에 마우스가 있는 동안 열림 (버튼 → 슬라이더로 옮기는 사이에 닫히지 않게 잠깐 기다림)
+    let popoverCloseTimer = null;
+    [btnVolume, volumePopover].forEach(el => {
+        el.addEventListener('mouseenter', () => { clearTimeout(popoverCloseTimer); setVolumePopover(true); });
+        el.addEventListener('mouseleave', () => {
+            clearTimeout(popoverCloseTimer);
+            popoverCloseTimer = setTimeout(() => setVolumePopover(false), 300);
+        });
+    });
+    volumeSlider.addEventListener('input', () => setVolumeFromWidget(Number(volumeSlider.value)));
+    // 버튼이나 슬라이더 위에서 휠로도 조절 (한 칸에 5)
+    [btnVolume, volumePopover].forEach(el => el.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        setVolumeFromWidget((ytMuted ? 0 : ytVolume) + (e.deltaY < 0 ? 5 : -5));
+    }, { passive: false }));
+}
+
 document.addEventListener('dblclick', (e) => {
     if (document.getElementById('settings-modal')?.classList.contains('show')) return;
 
-    if (e.target.closest('.controls, .setting-item, #lyrics-container, #track-info, #btn-fullscreen')) return;
+    if (e.target.closest('.controls, .setting-item, #lyrics-container, #track-info, #btn-fullscreen, .fs-icon-btn, #volume-popover, #progress-bar')) return;
     toggleFullscreen();
 });
+
+// ─── 전체화면: 마우스를 한동안 움직이지 않으면 커서와 가사 버튼을 숨김 (움직이면 다시 표시) ───
+const IDLE_HIDE_MS = 3000;
+let idleTimer = null;
+function wakeFromIdle() {
+    document.body.classList.remove('idle');
+    clearTimeout(idleTimer);
+    if (isFullscreen) idleTimer = setTimeout(() => document.body.classList.add('idle'), IDLE_HIDE_MS);
+}
+['mousemove', 'mousedown', 'wheel'].forEach(type => document.addEventListener(type, wakeFromIdle, { passive: true }));
 
 function toggleFullscreen() {
     isFullscreen = !isFullscreen;
@@ -662,11 +809,31 @@ function toggleFullscreen() {
         document.body.classList.remove('fullscreen-mode');
         ipcRenderer.send('toggle-fullscreen', false);
     }
+    wakeFromIdle(); // 전체화면이면 숨김 타이머 시작, 아니면 숨김 해제
+    if (!isFullscreen) setVolumePopover(false);
     lastLyricIdx = -1;
 }
 
+// 스페이스: 재생/일시정지, ← / →: 5초 이동 (소리를 부드럽게 줄였다가 동작하는 처리는 Tampermonkey 쪽에서)
+const SEEK_STEP_MS = 5000;
+const isTypingTarget = (target) => !!target.closest?.('input, textarea, select');
+
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && isFullscreen) toggleFullscreen();
+
+    if (e.code === 'Space' && !isTypingTarget(e.target)) {
+        e.preventDefault(); // 포커스된 버튼이 스페이스로 한 번 더 눌리는 것 방지
+        if (!e.repeat) sendControlRequest('play-pause');
+        return;
+    }
+
+    if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !isTypingTarget(e.target) && trackDuration > 0) {
+        e.preventDefault();
+        const current = isPlaying && lastSyncTime !== null ? localProgress + (performance.now() - lastSyncTime) : localProgress;
+        const target = current + (e.key === 'ArrowRight' ? SEEK_STEP_MS : -SEEK_STEP_MS);
+        seekTo(Math.max(0, Math.min(trackDuration - 1000, target)));
+        return;
+    }
 
     // ↑ / ↓: 가사 싱크 ±50ms (↑ = 가사를 더 일찍, ↓ = 더 늦게. 설정 창 싱크 값과 같은 값)
     if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.target.closest?.('input, textarea, select')) {
@@ -676,6 +843,11 @@ document.addEventListener('keydown', (e) => {
         applyConfigToUI();
         showSyncToast();
     }
+});
+
+// 스페이스를 뗄 때 포커스된 버튼이 눌리는 것도 막음 (버튼은 스페이스를 뗄 때 클릭됨)
+document.addEventListener('keyup', (e) => {
+    if (e.code === 'Space' && !isTypingTarget(e.target)) e.preventDefault();
 });
 
 let syncToastTimer = null;
@@ -716,6 +888,7 @@ async function syncWithServer() {
     try {
         const track = await fetch('http://127.0.0.1:8888/current-track').then(r => r.json());
         const fetchedAt = performance.now();
+        applyRemoteVolume(track);
 
         // 진행 시간은 측정 시점 기준이므로, 그 뒤로 흐른 시간(전송·폴링 지연)만큼 보정
         if (track.playing && track.sampledAt) {
@@ -730,6 +903,7 @@ async function syncWithServer() {
         // 1. 재생 상태 확인 및 이퀄라이저 제어
         if (!track.playing) {
             isPlaying = false;
+            reportPlaybackState(false);
             lastSyncTime = null;
             stopEQ();
             document.getElementById('btn-play-pause').textContent = '▶';
@@ -767,6 +941,9 @@ async function syncWithServer() {
             document.documentElement.style.setProperty('--ui-glow', 'rgba(255, 255, 255, 0.8)');
             document.documentElement.style.setProperty('--ui-glow-dim', 'rgba(255, 255, 255, 0.5)');
             document.documentElement.style.setProperty('--ui-bg', 'rgba(255, 255, 255, 0.15)');
+            document.documentElement.style.setProperty('--ui-surface', 'rgba(36, 36, 36, 0.5)');
+            document.documentElement.style.setProperty('--ui-surface-hover', 'rgba(255, 255, 255, 0.1)');
+            document.documentElement.style.setProperty('--ui-surface-active', 'rgba(255, 255, 255, 0.18)');
 
             if (!isSongChanged && isArtistChanged && currentLyrics.length > 0) {
                 lastArtist = track.artist;
@@ -822,6 +999,7 @@ async function syncWithServer() {
         // 곡 전환 시 페이드(400ms) 대기 시간이 진행 시간에 누락되지 않도록 응답 받은 시점을 기준으로 사용
         lastSyncTime = fetchedAt;
         isPlaying = true;
+        reportPlaybackState(true);
         trackDuration = track.duration;
 
         // 3. 앨범 아트 다중 화질 추적 및 타임아웃 최적화
@@ -863,6 +1041,12 @@ async function syncWithServer() {
 
                     tempImg.onload = () => {
                         clearTimeout(timeoutId);
+                        // 고화질 썸네일(maxresdefault)이 없는 영상은 유튜브가 404와 함께 회색 "…" 대체 이미지(120×90)를 보내는데,
+                        // 브라우저는 이것도 불러오기 성공으로 처리함 → 이 크기면 대체 이미지로 보고 다음 후보로 넘어감
+                        if (tempImg.naturalWidth <= 120 && index < tryUrls.length - 1) {
+                            loadNextImage(index + 1);
+                            return;
+                        }
                         // 유튜브 영상 썸네일(16:9)이 정사각형으로 잘리지 않도록 원본 비율 전달 (세로로 긴 이미지는 정사각형 처리)
                         const ratio = tempImg.naturalWidth / tempImg.naturalHeight;
                         albumArtEl.style.setProperty('--art-ratio', ratio > 1 ? ratio : 1);
@@ -919,6 +1103,7 @@ function seekTo(ms) {
     // 응답을 기다리지 않고 화면부터 바로 이동
     localProgress = ms;
     lastSyncTime = performance.now();
+    setProgressFill(trackDuration ? ms / trackDuration : 0);
     // 일시정지 중에도 가사 표시가 바로 이동하도록 직접 갱신
     const { prev2, prev, current, next, next2, idx } = getLyricContext(ms + LYRIC_LEAD_MS + appConfig.syncOffset);
     lastLyricIdx = idx; shownLyricIdx = idx;
@@ -927,6 +1112,76 @@ function seekTo(ms) {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ms })
     }).catch(() => { });
 }
+
+// ─── 진행 바 클릭/드래그 → 해당 시각으로 이동 ───
+// 마우스를 올리면 이동할 시각(예: 1:23)을 말풍선으로 보여주고, 드래그 중에는 진행 바가 커서를 따라감 (놓을 때 이동)
+let isScrubbing = false;
+
+function formatTime(ms) {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
+function setProgressFill(ratio) {
+    const percent = `${Math.max(0, Math.min(1, ratio)) * 100}%`;
+    const fill = document.getElementById('progress-fill');
+    const lpFill = document.getElementById('lp-progress-fill');
+    if (fill) fill.style.width = percent;
+    if (lpFill) lpFill.style.width = percent;
+}
+
+const seekTooltip = document.createElement('div');
+seekTooltip.id = 'seek-tooltip';
+document.body.appendChild(seekTooltip);
+
+function attachProgressSeek(barEl) {
+    if (!barEl) return;
+    const ratioAt = (e) => {
+        const rect = barEl.getBoundingClientRect();
+        return rect.width ? Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)) : 0;
+    };
+    const showTooltip = (e, ratio) => {
+        if (!trackDuration) return;
+        seekTooltip.textContent = formatTime(ratio * trackDuration);
+        seekTooltip.classList.add('show');
+        const rect = barEl.getBoundingClientRect();
+        const w = seekTooltip.offsetWidth, h = seekTooltip.offsetHeight;
+        // 창 밖으로 잘리지 않게 위치 제한 (바 모드는 창 높이가 44px이라 막대 바로 위에 붙임)
+        seekTooltip.style.left = `${Math.max(4, Math.min(window.innerWidth - w - 4, e.clientX - w / 2))}px`;
+        seekTooltip.style.top = `${Math.max(2, rect.top - h - 8)}px`;
+    };
+    const hideTooltip = () => seekTooltip.classList.remove('show');
+
+    barEl.addEventListener('pointerdown', (e) => {
+        if (!trackDuration || e.button !== 0) return;
+        e.preventDefault();
+        isScrubbing = true;
+        barEl.classList.add('scrubbing');
+        barEl.setPointerCapture(e.pointerId);
+        const ratio = ratioAt(e);
+        setProgressFill(ratio);
+        showTooltip(e, ratio);
+    });
+    barEl.addEventListener('pointermove', (e) => {
+        const ratio = ratioAt(e);
+        if (isScrubbing) setProgressFill(ratio);
+        showTooltip(e, ratio);
+    });
+    const finish = (e, commit) => {
+        if (!isScrubbing) return;
+        isScrubbing = false;
+        barEl.classList.remove('scrubbing');
+        if (barEl.hasPointerCapture(e.pointerId)) barEl.releasePointerCapture(e.pointerId);
+        if (commit) seekTo(ratioAt(e) * trackDuration);
+        if (!barEl.matches(':hover')) hideTooltip();
+    };
+    barEl.addEventListener('pointerup', (e) => finish(e, true));
+    barEl.addEventListener('pointercancel', (e) => finish(e, false));
+    barEl.addEventListener('pointerleave', () => { if (!isScrubbing) hideTooltip(); });
+}
+
+attachProgressSeek(document.getElementById('progress-bar'));
+attachProgressSeek(document.querySelector('.lp-progress-container'));
 
 Object.entries(LYRIC_SLOT_OFFSETS).forEach(([id, offset]) => {
     document.getElementById(id)?.addEventListener('click', () => {
@@ -949,10 +1204,7 @@ function tickProgress() {
     let percent = Math.max(0, Math.min(100, (progress / trackDuration) * 100));
     if (isNaN(percent) || !isFinite(percent)) percent = 0;
 
-    const progressFill = document.getElementById('progress-fill');
-    if (progressFill) progressFill.style.width = `${percent}%`;
-    const lpProgressFill = document.getElementById('lp-progress-fill');
-    if (lpProgressFill) lpProgressFill.style.width = `${percent}%`;
+    if (!isScrubbing) setProgressFill(percent / 100);
 
     if (currentLyrics.length > 0 && (now - lastLyricCheckTime > 100)) {
         lastLyricCheckTime = now;
@@ -1029,6 +1281,13 @@ function startEQ() {
         const BASELINE_FALL_MS = 300;   // 기준선이 내려가는 속도 (조용해지면 빠르게 따라 내려감)
         const BASELINE_WEIGHT = 0.8;    // 기준선을 얼마나 빼는지
         const MOTION_GAIN = 2.6;        // 남은 변화량을 얼마나 키우는지
+        // 🚨 저음역 가중치: 저음(킥·서브 베이스, 탬퍼몽키의 저음 전용 분석기 값)은 계속 크게 울려 평균이 높으므로
+        //    기준선을 고음보다 조금 더 빼고 변화량을 더 키우며, 높이 배율을 줘서 평소 높이를 올리고 비트 때는 꼭대기까지 닿게 함
+        //    (막대 0·1 = 저음, 2 = 중간값으로 자연스럽게 연결)
+        const BAR_BASELINE_WEIGHT = [0.82, 0.82, 0.81];
+        const BAR_MOTION_GAIN = [4.0, 4.0, 3.3];
+        const BAR_RELEASE_MS = [80, 80, 95];
+        const BAR_BOOST = [1.6, 1.6, 1.4]; // 저음 막대 높이 배율 (없는 막대는 아래 고음 배율 계산을 따름)
         const BASELINE_SNAP_RATIO = 0.5; // 기준선이 소리의 절반보다 낮으면
         const BASELINE_LOCK_MS = 400;    // 이 시간 동안 기준선을 소리에 고정
         let baselineLock = new Array(10).fill(0);
@@ -1068,7 +1327,7 @@ function startEQ() {
                 const raw = latestEqData[index] || 0;
                 let targetValue = (raw > 0 ? raw + EQ_HEADROOM : 0) * 0.5;
                 const diff = targetValue - currentValues[index];
-                const tau = diff > 0 ? ATTACK_MS : RELEASE_MS;
+                const tau = diff > 0 ? ATTACK_MS : (BAR_RELEASE_MS[index] ?? RELEASE_MS);
                 currentValues[index] += diff * (1 - Math.exp(-dt / tau));
 
                 if (Math.abs(diff) < 0.1) {
@@ -1088,13 +1347,16 @@ function startEQ() {
                     const baseTau = smoothed > baselines[index] ? BASELINE_RISE_MS : BASELINE_FALL_MS;
                     baselines[index] += (smoothed - baselines[index]) * (1 - Math.exp(-dt / baseTau));
                 }
-                let value = Math.max(0, (smoothed - baselines[index] * BASELINE_WEIGHT) * MOTION_GAIN);
+                const weight = BAR_BASELINE_WEIGHT[index] ?? BASELINE_WEIGHT;
+                const gain = BAR_MOTION_GAIN[index] ?? MOTION_GAIN;
+                let value = Math.max(0, (smoothed - baselines[index] * weight) * gain);
 
                 if (visualizerMode === 'BARS') {
-                    let baseScale = Math.max(0.2, (value / 255) * 1.75);
-                    let boostMultiplier = 1 + (index / (bars.length - 1)) * 1.5;
-                    if (index === 0) boostMultiplier *= 1.8;
-                    if (index === 1) boostMultiplier *= 1.6;
+                    // 최소 높이는 배율을 곱한 뒤 마지막에 적용 (먼저 적용하면 고음 막대의 최소 높이까지 배율만큼 커져,
+                    // 조용할 때 저음은 점인데 고음은 막대로 떠 있게 됨)
+                    let baseScale = (value / 255) * 1.75;
+                    // 고음일수록 소리가 작으므로 높이 배율을 키움 (저음은 위 가중치로 움직임을 키우므로 추가 배율 없음)
+                    let boostMultiplier = BAR_BOOST[index] ?? 1 + (index / (bars.length - 1)) * 1.5;
                     const scale = Math.min(baseScale * boostMultiplier, EQ_MAX_SCALE);
                     bar.style.height = `${Math.max(BAR_MIN_PX, BAR_BASE_PX * scale).toFixed(1)}px`;
                 } else {
@@ -1187,6 +1449,9 @@ function applyConfigToApp() {
         if (lpMode) lpMode.style.opacity = appConfig.opacity;
     }
     document.body.setAttribute('data-theme', appConfig.theme);
+    document.body.classList.toggle('show-lyrics', !!appConfig.showLyrics);
+    document.getElementById('btn-lyrics')?.setAttribute('aria-pressed', String(!!appConfig.showLyrics));
+    document.getElementById('btn-lyrics')?.classList.toggle('active', !!appConfig.showLyrics);
     applyGradient(null);
 
     ipcRenderer.send('update-system-settings', {

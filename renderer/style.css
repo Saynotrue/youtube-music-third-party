@@ -12,6 +12,10 @@
     --ui-glow: rgba(255, 255, 255, 0.8);
     --ui-glow-dim: rgba(255, 255, 255, 0.5);
     --ui-bg: rgba(255, 255, 255, 0.15);
+    /* 전체화면 아이콘 버튼·소리 슬라이더 배경 (밝은 화면이면 app.js가 흰색 반투명으로 바꿈) */
+    --ui-surface: rgba(36, 36, 36, 0.5);
+    --ui-surface-hover: rgba(255, 255, 255, 0.1);
+    --ui-surface-active: rgba(255, 255, 255, 0.18);
 }
 
 * {
@@ -220,6 +224,58 @@ body {
     background: rgba(255, 255, 255, 0.15);
     border-radius: 2px;
     flex-shrink: 0;
+}
+
+/* 진행 바 클릭/드래그로 이동: 막대가 얇아 누르기 어려우므로 위아래로 보이지 않는 클릭 영역을 넓힘 */
+#progress-bar,
+.lp-progress-container {
+    position: relative;
+    cursor: pointer;
+    -webkit-app-region: no-drag;
+    transition: transform 0.15s ease;
+}
+
+#progress-bar::before,
+.lp-progress-container::before {
+    content: '';
+    position: absolute;
+    left: -4px;
+    right: -4px;
+    top: -8px;
+    bottom: -8px;
+}
+
+#progress-bar:hover,
+#progress-bar.scrubbing,
+.lp-progress-container:hover,
+.lp-progress-container.scrubbing {
+    transform: scaleY(1.6);
+}
+
+/* 드래그 중에는 진행 바가 커서를 바로 따라가도록 애니메이션 끔 */
+#progress-bar.scrubbing #progress-fill,
+.lp-progress-container.scrubbing #lp-progress-fill {
+    transition: none !important;
+}
+
+/* 이동할 시각 말풍선 */
+#seek-tooltip {
+    position: fixed;
+    z-index: 100000;
+    padding: 3px 7px;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.75);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+}
+
+#seek-tooltip.show {
+    opacity: 1;
 }
 
 #progress-fill {
@@ -865,12 +921,215 @@ body.fullscreen-mode #bar {
     margin: 0 !important;
 }
 
+/* ─── 곡 정보 열 위치 ───
+   가사 창을 숨기면(기본) 곡 정보 열이 화면 가운데, 가사 버튼으로 가사 창을 켜면 왼쪽(10vw)으로 이동 */
+body.fullscreen-mode {
+    --fs-left: calc(50vw - max(45vh, 300px) / 2);
+}
+
+body.fullscreen-mode.show-lyrics {
+    --fs-left: 10vw;
+}
+
+/* 가운데 ↔ 왼쪽 이동 애니메이션 (각 요소의 기존 전환 효과는 유지) */
+body.fullscreen-mode #album-art { transition: opacity 0.3s ease, left 0.5s cubic-bezier(0.33, 0.5, 0.2, 1); }
+body.fullscreen-mode #track-info { transition: opacity 0.4s ease, left 0.5s cubic-bezier(0.33, 0.5, 0.2, 1); }
+body.fullscreen-mode #controls,
+body.fullscreen-mode #equalizer { transition: left 0.5s cubic-bezier(0.33, 0.5, 0.2, 1); }
+body.fullscreen-mode #progress-bar { transition: transform 0.15s ease, left 0.5s cubic-bezier(0.33, 0.5, 0.2, 1); }
+
+/* 가사 창 숨김: 가운데로 오는 앨범 커버 뒤로 밀려 들어가며 사라짐 (켤 때는 커버 뒤에서 오른쪽으로 빠져나옴)
+   → 왼쪽 열(앨범 커버·곡 정보 등)을 가사 창보다 위(z축)에 둠. 이동 속도/곡선은 왼쪽 열 이동과 같게 맞춤 */
+/* 켤 때: 커버 뒤에서 조금 빠져나온 뒤(0.1초) 서서히 나타남 */
+body.fullscreen-mode #lyrics-container {
+    z-index: 1;
+    transition: opacity 0.45s ease 0.1s, transform 0.5s cubic-bezier(0.33, 0.5, 0.2, 1), visibility 0s;
+}
+
+/* 끌 때: 이동(0.5초)보다 빨리 사라지게 해 희미한 잔상이 남지 않게 함.
+   이동 거리는 '커버 폭의 절반 - 24px'로 제한 → 가사 왼쪽 끝이 가운데 온 커버의 왼쪽 끝을 넘지 않음
+   (가사 창 왼쪽 끝 = 화면 가운데, 커버는 화면 가운데 기준으로 폭의 절반만큼 왼쪽까지 덮음) */
+body.fullscreen-mode:not(.show-lyrics) #lyrics-container {
+    opacity: 0 !important;
+    transform: translateX(calc(-1 * max(45vh, 300px) / 2 + 24px));
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.3s ease-in, transform 0.5s cubic-bezier(0.33, 0.5, 0.2, 1), visibility 0s 0.5s;
+}
+
+body.fullscreen-mode #album-art,
+body.fullscreen-mode #track-info {
+    z-index: 2;
+}
+
+/* 가사 창이 꺼져 있을 때는 가사 스크롤용 복제 줄(body에 붙음)도 보이지 않게 */
+body.fullscreen-mode:not(.show-lyrics) .lyric-ghost {
+    display: none;
+}
+
+/* 전체화면 오른쪽 아래 아이콘 버튼 (소리, 가사) — 공용 클래스 .fs-icon-btn */
+.fs-icon-btn {
+    display: none;
+}
+
+body.fullscreen-mode .fs-icon-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    bottom: 5vh;
+    width: 48px;
+    height: 48px;
+    border: none;
+    border-radius: 12px;
+    background: transparent;
+    color: var(--ui-secondary);
+    cursor: pointer;
+    z-index: 10000;
+    opacity: 1;
+    -webkit-app-region: no-drag;
+    transition: background 0.2s ease, color 0.2s ease, transform 0.1s ease, opacity 0.4s ease;
+}
+
+body.fullscreen-mode .fs-icon-btn:hover {
+    color: var(--ui-primary);
+    background: var(--ui-surface-hover);
+}
+
+body.fullscreen-mode .fs-icon-btn:active {
+    transform: scale(0.92);
+}
+
+/* 켜진 상태 (가사 창 표시 중, 소리 슬라이더 열림) */
+body.fullscreen-mode .fs-icon-btn.active {
+    color: var(--ui-primary);
+    background: var(--ui-surface-active);
+}
+
+body.fullscreen-mode #btn-lyrics {
+    right: 4vw;
+}
+
+/* 소리 버튼: 가사 버튼 왼쪽 */
+body.fullscreen-mode #btn-volume {
+    right: calc(4vw + 56px);
+}
+
+/* 소리 아이콘: 음파 3개가 볼륨에 비례해 점점 나타나고(--w1~--w3, app.js renderVolume), 음소거면 X가 나타남 */
+#btn-volume .vol-wave,
+#btn-volume .vol-mute {
+    transform-box: fill-box;
+    transition: opacity 0.25s ease, transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* 음파는 스피커 쪽(왼쪽)에서 퍼져 나오듯 커짐 */
+#btn-volume .vol-wave {
+    transform-origin: left center;
+}
+
+#btn-volume .vol-wave1 { opacity: var(--w1, 1); transform: scale(calc(0.5 + 0.5 * var(--w1, 1))); }
+#btn-volume .vol-wave2 { opacity: var(--w2, 1); transform: scale(calc(0.5 + 0.5 * var(--w2, 1))); }
+#btn-volume .vol-wave3 { opacity: var(--w3, 1); transform: scale(calc(0.5 + 0.5 * var(--w3, 1))); }
+
+#btn-volume .vol-mute {
+    transform-origin: center;
+    opacity: 0;
+    transform: scale(0.4);
+}
+
+#btn-volume[data-level="mute"] .vol-mute {
+    opacity: 1;
+    transform: scale(1);
+}
+
+/* 소리 슬라이더 (소리 버튼에 마우스를 올리면 위에 열림) */
+#volume-popover {
+    display: none;
+}
+
+body.fullscreen-mode #volume-popover {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    position: fixed;
+    right: calc(4vw + 56px);
+    bottom: calc(5vh + 56px);
+    width: 48px;
+    padding: 14px 0 10px;
+    border-radius: 12px;
+    background: var(--ui-surface);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    z-index: 10000;
+    -webkit-app-region: no-drag;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(6px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+body.fullscreen-mode #volume-popover.open {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+}
+
+/* 세로 슬라이더 (위가 큰 소리): 기본 슬라이더의 막대 테두리를 없애기 위해 직접 그림
+   가로 슬라이더를 -90° 돌려 세움 (margin으로 차지하는 자리를 세로 6×140px로 맞춤)
+   채워진 부분은 --vol(현재 볼륨 %)까지 진하게 (app.js renderVolume) */
+#volume-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 140px;
+    height: 6px;
+    margin: 67px -67px;
+    border: none;
+    border-radius: 3px;
+    outline: none;
+    background: linear-gradient(to right,
+        var(--ui-primary) var(--vol, 100%),
+        color-mix(in srgb, var(--ui-primary) 25%, transparent) var(--vol, 100%));
+    transform: rotate(-90deg);
+    cursor: pointer;
+}
+
+#volume-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border: none;
+    border-radius: 50%;
+    background: var(--ui-primary);
+    box-shadow: none;
+}
+
+#volume-value {
+    font-size: 11px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--ui-secondary);
+}
+
+/* 마우스를 한동안 움직이지 않으면 커서와 아이콘 버튼 숨김 (app.js wakeFromIdle) */
+body.fullscreen-mode.idle,
+body.fullscreen-mode.idle * {
+    cursor: none !important;
+}
+
+body.fullscreen-mode.idle .fs-icon-btn,
+body.fullscreen-mode.idle #volume-popover {
+    opacity: 0;
+    pointer-events: none;
+}
+
 /* ─── 좌측: 앨범 아트 ─── */
 body.fullscreen-mode #album-art {
     /* 정사각형 영역(--art-size) 안에서 원본 비율 유지 + 세로 가운데 정렬 (16:9 영상 썸네일이 잘리지 않도록) */
     --art-size: max(45vh, 300px);
     position: fixed !important;
-    left: 10vw !important;
+    left: var(--fs-left) !important;
     top: calc(15vh + (var(--art-size) - var(--art-size) / var(--art-ratio, 1)) / 2) !important;
     width: var(--art-size) !important;
     height: calc(var(--art-size) / var(--art-ratio, 1)) !important;
@@ -883,7 +1142,7 @@ body.fullscreen-mode #album-art {
 /* ─── 좌측: 곡 정보 상자 (내용물에 맞춰 동적 높이 증가) ─── */
 body.fullscreen-mode #track-info {
     position: fixed !important;
-    left: 10vw !important;
+    left: var(--fs-left) !important;
     top: calc(15vh + 45vh + 30px) !important;
     width: 45vh !important;
     min-width: 300px !important;
@@ -931,7 +1190,7 @@ body.fullscreen-mode #controls,
 body.fullscreen-mode .controls,
 body.fullscreen-mode .media-controls {
     position: fixed !important;
-    left: 10vw !important;
+    left: var(--fs-left) !important;
     top: calc(15vh + 45vh + 30px + var(--ti-h, 75px) + 35px) !important;
     width: 45vh !important;
     min-width: 300px !important;
@@ -961,7 +1220,7 @@ body.fullscreen-mode #progress-container,
 body.fullscreen-mode #progress-bar,
 body.fullscreen-mode .progress-wrapper {
     position: fixed !important;
-    left: 10vw !important;
+    left: var(--fs-left) !important;
     top: calc(15vh + 45vh + 30px + var(--ti-h, 75px) + 115px) !important;
     width: 45vh !important;
     min-width: 300px !important;
@@ -983,7 +1242,7 @@ body.fullscreen-mode .progress-fill {
 
 body.fullscreen-mode #equalizer {
     position: fixed !important;
-    left: calc(10vw + 45vh - 50px) !important;
+    left: calc(var(--fs-left) + 45vh - 50px) !important;
     top: calc(15vh + 45vh + 30px + var(--ti-h, 75px) - 28px) !important;
     transform: scale(1.5) !important;
     z-index: 9999 !important;
@@ -1066,6 +1325,15 @@ body.fullscreen-mode #next2-lyric {
 
 body.fullscreen-mode #lyrics-container span:empty {
     cursor: default;
+}
+
+/* 줄바꿈: 한글도 음절 단위가 아니라 띄어쓰기 단위로 줄을 바꿈 (keep-all)
+   띄어쓰기가 거의 없는 일본어 가사는 keep-all만 쓰면 줄이 안 바뀌고 넘치므로, 한 줄을 넘을 때만 그 자리에서 끊음 (anywhere) */
+body.fullscreen-mode #lyrics-container span,
+.lyric-ghost,
+body.fullscreen-mode #title {
+    word-break: keep-all;
+    overflow-wrap: anywhere;
 }
 
 /* 앞뒤 두 번째 줄은 전체화면에서만 표시 (바 모드는 가로 배치라 3줄 유지) */

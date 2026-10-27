@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Music Ultimate Integration (Ultra Light v7.1)
 // @namespace    http://tampermonkey.net/
-// @version      8.5
+// @version      9.0
 // @author       You
 // @match        https://music.youtube.com/*
 // @match        https://www.youtube.com/embed/*
@@ -309,7 +309,10 @@
             progress: progress,
             sampledAt: Date.now(), // 위젯이 전송/폴링 지연만큼 진행 시간을 보정하는 기준
             duration: duration,
-            lyric: currentLyric
+            lyric: currentLyric,
+            // 위젯의 소리 조절 슬라이더에 현재 볼륨 표시 (0~100)
+            volume: player?.getVolume ? player.getVolume() : (video ? Math.round(video.volume * 100) : undefined),
+            muted: player?.isMuted ? player.isMuted() : !!video?.muted
         };
 
         fetch("http://127.0.0.1:8888/update-state", {
@@ -347,27 +350,148 @@
         return false;
     }
 
+    // ─── 부드러운 일시정지/이동: 소리를 서서히 줄인 뒤 동작하고, 다시 서서히 올림 ───
+    // 오디오 연결(fadeGain)은 페이지를 한 번 클릭한 뒤에 생기므로, 그 전에는 페이드 없이 바로 동작
+    const PAUSE_FADE_MS = 300;
+    const SEEK_FADE_OUT_MS = 200;
+    const FADE_IN_MS = 350;
+    let fadeSeq = 0; // 연속 입력(예: → 여러 번) 때 마지막 동작만 소리를 다시 올리도록
+
+    function fadeOutput(target, ms) {
+        if (!fadeGain || !audioCtx) return Promise.resolve();
+        const g = fadeGain.gain, now = audioCtx.currentTime;
+        g.cancelScheduledValues(now);
+        g.setValueAtTime(g.value, now);
+        g.linearRampToValueAtTime(target, now + ms / 1000);
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    function setOutputGain(value) {
+        if (!fadeGain || !audioCtx) return;
+        fadeGain.gain.cancelScheduledValues(audioCtx.currentTime);
+        fadeGain.gain.setValueAtTime(value, audioCtx.currentTime);
+    }
+
+    // 영상에서 이벤트가 오거나 시간이 지나면 진행
+    function waitForVideoEvent(video, type, timeoutMs) {
+        return new Promise(resolve => {
+            if (!video) return resolve();
+            const done = () => { clearTimeout(timer); video.removeEventListener(type, done); resolve(); };
+            const timer = setTimeout(done, timeoutMs);
+            video.addEventListener(type, done, { once: true });
+        });
+    }
+
+    function isVideoPlaying() {
+        const video = document.querySelector('video.html5-main-video');
+        return navigator.mediaSession?.playbackState
+            ? navigator.mediaSession.playbackState === 'playing'
+            : !!(video && !video.paused);
+    }
+
+    function pausePlayback() {
+        const video = document.querySelector('video.html5-main-video');
+        if (runMediaAction('pause')) return;
+        if (clickPlayerBarButton(['#play-pause-button', '.play-pause-button'])) return;
+        video?.pause();
+    }
+
+    function resumePlayback() {
+        const video = document.querySelector('video.html5-main-video');
+        if (runMediaAction('play')) return;
+        if (clickPlayerBarButton(['#play-pause-button', '.play-pause-button'])) return;
+        video?.play();
+    }
+
+    async function togglePlaybackWithFade() {
+        const seq = ++fadeSeq;
+        const video = document.querySelector('video.html5-main-video');
+        if (isVideoPlaying()) {
+            await fadeOutput(0, PAUSE_FADE_MS);
+            if (seq !== fadeSeq) return;
+            pausePlayback();
+            // 멈춘 뒤에는 음량을 원래대로 (유튜브 뮤직 화면에서 직접 재생해도 소리가 나도록)
+            await waitForVideoEvent(video, 'pause', 300);
+            if (seq === fadeSeq) setOutputGain(1);
+        } else {
+            setOutputGain(0);
+            resumePlayback();
+            await waitForVideoEvent(video, 'playing', 600); // 실제로 소리가 나기 시작한 뒤 올림
+            if (seq === fadeSeq) fadeOutput(1, FADE_IN_MS);
+        }
+    }
+
+    async function seekWithFade(sec) {
+        const seq = ++fadeSeq;
+        const video = document.querySelector('video.html5-main-video');
+        const playing = isVideoPlaying();
+        if (playing) {
+            await fadeOutput(0, SEEK_FADE_OUT_MS);
+            if (seq !== fadeSeq) return; // 그 사이 새 이동 요청이 오면 그것만 처리
+        }
+        seekTo(sec);
+        if (!playing) return;
+        await waitForVideoEvent(video, 'seeked', 700);
+        if (seq === fadeSeq) fadeOutput(1, FADE_IN_MS);
+    }
+
+    // 위젯에서 가사 클릭 → 해당 위치로 이동
+    // 플레이어 API(seekTo)가 조용히 무시되는 경우가 있어, 실제로 이동했는지 확인하고 안 됐으면 영상 위치를 직접 바꿈
+    function seekTo(sec) {
+        if (!Number.isFinite(sec) || sec < 0) return;
+        const player = document.getElementById('movie_player');
+        const video = document.querySelector('video.html5-main-video');
+        const currentSec = () => player?.getCurrentTime?.() ?? video?.currentTime ?? 0;
+        try { player?.seekTo?.(sec, true); } catch (e) { }
+        setTimeout(() => {
+            if (Math.abs(currentSec() - sec) > 2 && video) {
+                console.log('[가사 위젯] 플레이어 이동 실패 → 영상 위치 직접 변경', sec);
+                video.currentTime = sec;
+            }
+        }, 400);
+    }
+
+    // 위젯 소리 조절 → 유튜브 뮤직 볼륨 변경 (플레이어 바의 볼륨 슬라이더 표시도 맞춤)
+    function setVolume(volume) {
+        if (!Number.isFinite(volume)) return;
+        const player = document.getElementById('movie_player');
+        if (player?.setVolume) {
+            player.setVolume(volume);
+            if (volume > 0 && player.isMuted?.()) player.unMute?.();
+        } else {
+            const video = document.querySelector('video.html5-main-video');
+            if (video) { video.volume = volume / 100; if (volume > 0) video.muted = false; }
+        }
+        const barSlider = document.querySelector('ytmusic-player-bar #volume-slider');
+        if (barSlider) barSlider.value = volume;
+    }
+
+    // 위젯 소리 버튼 클릭 → 음소거/해제
+    function setMuted(muted) {
+        const player = document.getElementById('movie_player');
+        if (player?.mute && player?.unMute) muted ? player.mute() : player.unMute();
+        else { const video = document.querySelector('video.html5-main-video'); if (video) video.muted = muted; }
+    }
+
     function handleCommand(command) {
         if (command.startsWith('captions:')) {
             try { extractCaptions(JSON.parse(command.slice('captions:'.length))); } catch (e) { }
             return;
         }
+        if (command.startsWith('mute:')) {
+            setMuted(command === 'mute:1');
+            return;
+        }
+        if (command.startsWith('volume:')) {
+            setVolume(Number(command.slice('volume:'.length)));
+            return;
+        }
         if (command.startsWith('seek:')) {
-            const sec = Number(command.slice('seek:'.length)) / 1000;
-            if (!Number.isFinite(sec)) return;
-            const player = document.getElementById('movie_player');
-            if (player?.seekTo) player.seekTo(sec, true);
-            else { const video = document.querySelector('video.html5-main-video'); if (video) video.currentTime = sec; }
+            seekWithFade(Number(command.slice('seek:'.length)) / 1000);
             return;
         }
         if (command === 'play-pause') {
-            const video = document.querySelector('video.html5-main-video');
-            const playing = navigator.mediaSession?.playbackState
-                ? navigator.mediaSession.playbackState === 'playing'
-                : !!(video && !video.paused);
-            if (runMediaAction(playing ? 'pause' : 'play')) return;
-            if (clickPlayerBarButton(['#play-pause-button', '.play-pause-button'])) return;
-            if (video) playing ? video.pause() : video.play();
+            togglePlaybackWithFade();
         } else if (command === 'next') {
             if (runMediaAction('nexttrack')) return;
             if (clickPlayerBarButton(['.next-button', '[aria-label="다음"]', '[aria-label="Next"]'])) return;
@@ -400,6 +524,12 @@
     let animationFrameId = null;
     let watchdogTimer = null;
     let audioTicker = null;
+    // 🚨 저음 전용 분석기: 기본 분석기(256)는 한 칸이 약 172Hz라 킥·서브 베이스(40~150Hz)를 구분하지 못함
+    //    → 칸을 약 21Hz로 잘게 나누는 분석기(2048)를 따로 두고 낮은 막대 4개만 여기서 계산 (나머지 막대는 그대로)
+    let bassAnalyser = null;
+    // 낮은 막대 4개의 주파수 범위(Hz): 킥·서브 베이스 / 베이스 / 저음 / 중저음
+    const BASS_BANDS = [[40, 90], [90, 180], [180, 350], [350, 700]];
+    let fadeGain = null; // 일시정지/이동 때 소리를 부드럽게 줄였다 올리는 음량 단계 (유튜브 뮤직 볼륨 값은 그대로)
 
     // 🚨 볼륨 보정: 영상 볼륨은 분석기에 들어가기 전에 적용되므로, 유튜브 뮤직 볼륨을 줄이면 파형도 작아짐.
     //    볼륨만큼 줄어든 데시벨(예: 50% → -6dB)만큼 분석 범위를 같이 내려서 볼륨과 관계없이 같은 파형을 보여줌.
@@ -413,10 +543,13 @@
         if (Math.abs(v - compensatedVolume) < 0.001) return;
         compensatedVolume = v;
         const offset = 20 * Math.log10(v);
-        try {
-            analyser.minDecibels = BASE_MIN_DB + offset;
-            analyser.maxDecibels = BASE_MAX_DB + offset;
-        } catch (e) { }
+        for (const node of [analyser, bassAnalyser]) {
+            if (!node) continue;
+            try {
+                node.minDecibels = BASE_MIN_DB + offset;
+                node.maxDecibels = BASE_MAX_DB + offset;
+            } catch (e) { }
+        }
     }
 
     const connectWS = () => {
@@ -426,6 +559,16 @@
 
         ws.onopen = () => {
             const dataArray = new Uint8Array(analyser.frequencyBinCount);
+            const bassData = new Uint8Array(bassAnalyser.frequencyBinCount);
+            // 각 범위에 해당하는 칸 번호 (칸 폭 = 샘플레이트 / fftSize)
+            const binWidth = audioCtx.sampleRate / bassAnalyser.fftSize;
+            const bassBins = BASS_BANDS.map(([lo, hi]) => [Math.max(1, Math.floor(lo / binWidth)), Math.ceil(hi / binWidth)]);
+            // 범위 안에서 가장 큰 값 (한 칸이 좁아 소리가 특정 칸에 몰리므로 평균보다 최댓값이 실제 세기에 가까움)
+            const bandPeak = ([from, to]) => {
+                let peak = 0;
+                for (let i = from; i <= to && i < bassData.length; i++) if (bassData[i] > peak) peak = bassData[i];
+                return peak;
+            };
             if (animationFrameId) cancelAnimationFrame(animationFrameId);
             if (watchdogTimer) clearInterval(watchdogTimer);
 
@@ -445,20 +588,24 @@
                     try {
                         mediaSource = audioCtx.createMediaElementSource(currentVideo);
                         mediaSource.connect(analyser);
+                        mediaSource.connect(bassAnalyser);
                     } catch (e) { }
                 }
 
                 if (analyser && ws.readyState === WebSocket.OPEN && currentVideo && !currentVideo.paused) {
                     compensateVolume(currentVideo.volume);
                     analyser.getByteFrequencyData(dataArray);
+                    bassAnalyser.getByteFrequencyData(bassData);
 
                     let hasAudio = false;
                     for (let i = 0; i < 10; i++) { if (dataArray[i] > 0) hasAudio = true; }
 
                     if (hasAudio) {
                         const eqData = [
-                            dataArray[1] || 0, dataArray[2] || 0, dataArray[3] || 0,
-                            dataArray[4] || 0, dataArray[6] || 0, dataArray[8] || 0,
+                            // 낮은 막대 4개: 저음 전용 분석기 (40~90 / 90~180 / 180~350 / 350~700Hz)
+                            ...bassBins.map(bandPeak),
+                            // 나머지 6개: 기존 분석기 (약 1.0 / 1.4 / 2.1 / 2.8 / 3.4 / 4.1kHz)
+                            dataArray[6] || 0, dataArray[8] || 0,
                             dataArray[12] || 0, dataArray[16] || 0, dataArray[20] || 0,
                             dataArray[24] || 0
                         ];
@@ -522,7 +669,13 @@
             analyser = audioCtx.createAnalyser();
             analyser.fftSize = 256;
             analyser.smoothingTimeConstant = 0.4;
-            analyser.connect(audioCtx.destination);
+            bassAnalyser = audioCtx.createAnalyser();
+            bassAnalyser.fftSize = 2048;
+            bassAnalyser.smoothingTimeConstant = 0.4;
+            // 영상 → 분석기 → 페이드 음량 → 스피커 (이퀄라이저는 페이드 전 소리를 분석하므로 영향 없음)
+            fadeGain = audioCtx.createGain();
+            analyser.connect(fadeGain);
+            fadeGain.connect(audioCtx.destination);
             audioSetupDone = true;
             connectWS();
         } catch (e) {

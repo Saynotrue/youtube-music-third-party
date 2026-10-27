@@ -44,6 +44,19 @@ app.post('/next', (req, res) => {
     res.json({ ok: true });
 });
 
+// 전체화면 소리 조절 (0~100)
+app.post('/volume', (req, res) => {
+    const volume = Number(req.body?.volume);
+    if (Number.isFinite(volume)) sendCommand(`volume:${Math.max(0, Math.min(100, Math.round(volume)))}`);
+    res.json({ ok: true });
+});
+
+// 전체화면 소리 버튼 클릭 → 음소거/해제
+app.post('/mute', (req, res) => {
+    sendCommand(`mute:${req.body?.muted ? 1 : 0}`);
+    res.json({ ok: true });
+});
+
 // 전체화면 가사 클릭 → 해당 가사 위치로 이동 (ms)
 app.post('/seek', (req, res) => {
     const ms = Number(req.body?.ms);
@@ -107,16 +120,19 @@ app.get('/current-track', (req, res) => {
 // 텍스트에서 가장 많이 쓰인 문자 체계로 언어 추정 (영문은 글자 단위라 음절 문자와 비슷한 비중이 되도록 보정)
 function detectTextLang(text) {
     const count = (re) => (text.match(re) || []).length;
+    const kana = count(/[ぁ-ゟァ-ヿ]/g), kanji = count(/[一-龥]/g);
     const scores = {
         ko: count(/[가-힣]/g),
-        ja: count(/[ぁ-ゟァ-ヿ]/g) + count(/[一-龥]/g) * 0.5,
+        // 가나 없이 한자만 있으면 중국어 (일본어 가사에는 거의 항상 가나가 섞임. 예: 중국어 가사를 일본어로 잘못 판단하던 문제)
+        ja: kana > 0 ? kana + kanji * 0.5 : 0,
+        zh: kana > 0 ? 0 : kanji,
         en: count(/[a-zA-Z]/g) / 4,
     };
     const [lang, score] = Object.entries(scores).sort((a, b) => b[1] - a[1])[0];
     return score > 0 ? lang : null;
 }
 
-const normalize = (s) => (s || '').toLowerCase().replace(/[\s'"`‘’“”「」『』【】\[\]()（）|·・\-_:~!?.,]/g, '');
+const normalize = (s) => (s || '').toLowerCase().replace(/[\s'"`‘’“”「」『』【】\[\]()（）|·・\-_:~!?.,、。！？〜～…★☆♪♡]/g, '');
 
 // 같은 곡의 뮤직비디오 찾기 (유튜브 검색 결과 중 곡명이 들어간 영상, 아티스트 공식 채널 우선)
 const MV_EXCLUDE_KEYWORDS = /노래방|karaoke|커버|cover|inst\b|instrumental|reaction|리액션|piano|guitar|bass|drum|vietsub|싱크룸|직캠|fancam|teaser|티저|1시간|1hour|playlist|shorts/i;
@@ -176,14 +192,30 @@ function splitTitleParts(title) {
     return parts;
 }
 
+// 따옴표로 감싼 곡명 (앞뒤가 공백/구분선이어야 함 → "Don't"의 ' 같은 문자는 제외)
+const QUOTED_TITLE = /(?:^|[\s|ㅣ｜/])[‘'"“]([^’'"”]{1,60})[’'"”](?=$|[\s|ㅣ｜/,])/;
+const NON_SONG_WORDS = /\b(music video|official|m\/?v|lyric video|live)\b/gi;
+
 function parseOriginalSong(title) {
     const tracks = [], artists = [], titles = [];
     const artistOnly = new Set(); // 가수 이름으로 확정된 값 (곡명 후보에서 제외)
     const add = (list, v) => { v = (v || '').trim(); if (v && !list.includes(v)) list.push(v); };
 
+    // "가수 | '곡명'" 형태 (예: "네네코 마시로(Neneko Mashiro) | ‘봄꿈’", "TAEYEON (태연) 'To. X' / … Cover")
+    //   → 따옴표 안이 곡명, 같은 부분의 나머지(괄호 안 포함)는 가수 후보 (원곡 가수이거나 본인)
+    const quotedTitle = title.match(QUOTED_TITLE);
+    if (quotedTitle) {
+        const part = splitTitleParts(title).find(p => p.includes(quotedTitle[0])) || title;
+        const rest = part.replace(quotedTitle[0], ' ').replace(NON_SONG_WORDS, ' ');
+        for (const name of rest.split(/[\[(（【\])）】]|\s+[xX×]\s+/)) {
+            const n = name.replace(/\s+/g, ' ').trim();
+            if (n.length >= 2 && !/^(cover|커버)$/i.test(n)) add(artists, n);
+        }
+    }
+
     // "곡 정보 / 커버 가수" 형태이므로 커버 가수 부분(/, | 뒤)은 제외
     // "ㅣ"(한글 모음)를 구분선으로 쓰는 경우도 있음 (예: "orion - [米津玄師] ㅣ아카네 리제 【COVER】")
-    const songPart = splitTitleParts(title)[0];
+    const songPart = quotedTitle ? quotedTitle[1].trim() : splitTitleParts(title)[0];
     const groups = [...songPart.matchAll(/[\[(（【]([^\])）】]+)[\])）】]/g)].map(m => m[1].trim());
     for (const g of groups) {
         if (NON_SONG_GROUP.test(g) && !JP_CHARS.test(g)) continue;
@@ -205,6 +237,8 @@ function parseOriginalSong(title) {
         if (parts.length === 2) {
             parts.forEach(p => { add(tracks, p); add(artists, p); });
         } else {
+            // 일본어가 들어간 괄호는 원제일 가능성이 높으므로 통째로 원제 후보에도 넣음 (예: "앨리스 인 냉동고 (Alice in 冷凍庫)")
+            if (JP_CHARS.test(g)) add(tracks, g);
             add(artists, g);
         }
     }
@@ -223,7 +257,9 @@ function parseOriginalSong(title) {
     // 괄호 밖에 있는 일본어 원제도 후보로 추가
     for (const seg of songPart.match(JP_SEGMENTS) || []) add(tracks, seg);
 
-    return { tracks: tracks.filter(t => JP_CHARS.test(t) && !artistOnly.has(t)), artists, titles: titles.filter(t => !tracks.includes(t)) };
+    // 다른 후보에 포함된 조각은 뺌 (예: "Alice in 冷凍庫"가 있으면 "冷凍庫"는 제외)
+    const finalTracks = tracks.filter(t => JP_CHARS.test(t) && !artistOnly.has(t) && !tracks.some(o => o !== t && o.includes(t)));
+    return { tracks: finalTracks, artists, titles: titles.filter(t => !finalTracks.includes(t)) };
 }
 
 // 제목에 원제가 없을 때(예: "푸름과 여름"): 유튜브 검색 결과 제목들에 함께 적힌 일본어 원제 중 가장 많이 나온 것을 사용
@@ -320,6 +356,75 @@ async function searchLrclib(params) {
     }
 }
 
+// ─── 추가 가사 제공처 (lrclib에 가사가 없을 때) ──────────────
+// Syncanto(MIT, vendor/syncanto)의 제공처 코드 사용. 원본의 getLyrics()는 첫 검색 결과를 그대로 쓰므로,
+// search() 결과를 lrclib과 같은 기준(가수/곡명/길이)으로 검증한 뒤 getById()로 가사를 가져옴
+const { MusixmatchProvider } = require('./vendor/syncanto/providers/musixmatch');
+const { AppleMusicProvider } = require('./vendor/syncanto/providers/applemusic');
+const { NetEaseProvider } = require('./vendor/syncanto/providers/netease');
+const { QQMusicProvider } = require('./vendor/syncanto/providers/qqmusic');
+const { KugouProvider } = require('./vendor/syncanto/providers/kugou');
+require('./vendor/syncanto/utils/http').log = () => { }; // 라이브러리 내부 디버그 로그 끔
+
+// 우선순위 순서. Spotify 가사는 Musixmatch가 제공하므로 Spotify 자리에는 Musixmatch를 사용
+// (YouTube Music 가사는 싱크 없는 일반 가사이고 로그인이 필요해 제외)
+const EXTRA_PROVIDERS = [
+    { label: 'Spotify(Musixmatch)', provider: new MusixmatchProvider() },
+    { label: 'Apple Music', provider: new AppleMusicProvider() },
+    { label: 'NetEase', provider: new NetEaseProvider() },
+    { label: 'QQ Music', provider: new QQMusicProvider() },
+    { label: 'KuGou', provider: new KugouProvider() },
+];
+const EXTRA_REQUEST_TIMEOUT_MS = 8000;    // 요청 1번
+const EXTRA_PROVIDER_BUDGET_MS = 15000;   // 제공처 하나 전체 (모든 제공처를 동시에 검색하므로 최대 대기 시간도 이 정도)
+
+const withTimeout = (promise, ms) => Promise.race([promise, new Promise(resolve => setTimeout(() => resolve(null), ms))]);
+
+const LRC_TIMED_LINE = /^\s*\[\d{1,2}:\d{2}(?:[.:]\d{1,3})?\]\s*\S/;
+// 가사 앞에 붙는 제작 정보 줄 (예: NetEase "作词 : 大森元貴", "作曲 : …")
+const CREDIT_LINE = /^(作词|作詞|作曲|编曲|編曲|制作人|製作|制作团队|监制|混音|混缩|母带|和声|录音|吉他|贝斯|鼓|弦乐|出品|出品人|发行|演唱|原唱|翻唱|策划|后期|曲绘|词|曲|vocals?|lyrics?|lyricist|composer|composed by|arranged by|arranger|producer|written by)\s*(by)?\s*[:：]/i;
+
+// 한자로 된 짧은 항목명 + 콜론 (예: "混音/母带：LL", "和声编写：…") — 일본어 가사는 가나가 섞이므로 해당 없음
+const CREDIT_LINE_ZH = /^[一-龥\s/&·、]{1,10}[:：]/;
+
+// 제작 정보 줄과 맨 앞의 "곡명 - 가수" 줄(예: QQ "[00:00.23]ライラック - Mrs. GREEN APPLE")을 빼고 정리
+function cleanProviderLyrics(lrc, trackName, artistName) {
+    const nTitle = normalize(trackName), nArtist = normalize(artistName);
+    return lrc.split('\n').filter(line => {
+        const text = line.replace(/\[[^\]]*\]/g, '').trim();
+        if (!text) return true;
+        if (CREDIT_LINE.test(text) || CREDIT_LINE_ZH.test(text)) return false;
+        const n = normalize(text);
+        if (nTitle && nArtist && n.includes(nTitle) && n.includes(nArtist)) return false;
+        // 맨 앞의 "곡명 - 원작자" 줄 (예: "サクラキミワタシ - tuki.")
+        return !(nTitle && n.startsWith(nTitle) && /\s[-–]\s/.test(text));
+    }).join('\n');
+}
+
+// 제공처 하나에서 검색 → 검증(accept) 통과한 결과 중 길이가 가까운 순으로 싱크 가사를 찾음
+async function searchExtraProvider({ provider }, queries, accept, byDuration, expectLang, verifyLyrics) {
+    for (const query of queries) {
+        const results = (await withTimeout(provider.search(query).catch(() => []), EXTRA_REQUEST_TIMEOUT_MS)) || [];
+        const candidates = results
+            // 제공처마다 길이 단위가 다름 (NetEase는 ms, 나머지는 초)
+            .map(r => ({ ...r, trackName: r.name, artistName: r.artist, duration: r.duration > 10000 ? r.duration / 1000 : r.duration }))
+            .filter(accept)
+            .sort(byDuration)
+            .slice(0, 2);
+        for (const c of candidates) {
+            const track = await withTimeout(provider.getById(c.trackId).catch(() => null), EXTRA_REQUEST_TIMEOUT_MS);
+            if (!track?.synced) continue;
+            const lyrics = cleanProviderLyrics(track.synced, c.name, c.artist);
+            if (lyrics.split('\n').filter(l => LRC_TIMED_LINE.test(l)).length < 3) continue; // 싱크 줄이 거의 없으면 제외
+            if (isVandalizedLyrics(lyrics)) continue;
+            if (expectLang && detectTextLang(lyrics) !== expectLang) continue;
+            if (verifyLyrics && !verifyLyrics(c, lyrics)) continue;
+            return { lyrics, match: c };
+        }
+    }
+    return null;
+}
+
 // ─── 🚨 가사 Fetch (스마트 필터 및 커버 지원) ─────────────────
 app.get('/lyrics', async (req, res) => {
     const { title = '', artist, album, videoId } = req.query;
@@ -336,7 +441,7 @@ app.get('/lyrics', async (req, res) => {
     // 2. 노래 제목 정제
     // ("/"나 "-"로 무작정 자르면 "W/X/Y" → "W"처럼 곡명이 망가지므로 커버 가수 부분과 괄호만 제거)
     const original = parseOriginalSong(title);
-    let cleanTitle = original.titles[0] || title.split(/[\[\(\-\/\|]/)[0].trim();
+    let cleanTitle = original.titles[0] || original.tracks[0] || title.split(/[\[\(\-\/\|]/)[0].trim();
     if (!cleanTitle) cleanTitle = title.trim();
 
     // 원곡 정보: 제목 괄호 안의 원곡 가수/원제, 없으면 유튜브 검색으로 일본어 원제 확인
@@ -374,7 +479,8 @@ app.get('/lyrics', async (req, res) => {
     // 유튜브 뮤직 가수 이름은 "hebi. 헤비", "아오쿠모 린 AOKUMO RIN"처럼 표기가 섞여 있어 lrclib에서 검색되지 않으므로 표기별로 분리
     // 제목의 커버 가수 부분 (예: "アスノヨゾラ哨戒班 / Hebi. cover" → "Hebi", "… | 아라하시 타비 ARAHASHI TABI cover")
     // 유튜브 뮤직 가수 이름은 한글만 있는 경우(예: "헤비")가 있어 lrclib의 영문 표기와 맞추려면 제목 쪽 이름이 필요
-    const titleCoverArtist = (splitTitleParts(title).slice(1).join(' ') || '')
+    // 따옴표 곡명은 커버 가수 이름이 아님 (예: "아카네 리제(Akane Lize)ㅣ'Stranger'"의 Stranger)
+    const titleCoverArtist = (splitTitleParts(title.replace(QUOTED_TITLE, ' ')).slice(1).join(' ') || '')
         .replace(/[\[(（【][^\])）】]*[\])）】]/g, ' ')
         .replace(/\b(covered\s+by|cover(ed)?|歌ってみた|official|mv|m\/v|live|ver\.?|version)\b|커버|불러보았다/gi, ' ')
         .replace(/\s+/g, ' ').trim();
@@ -400,6 +506,8 @@ app.get('/lyrics', async (req, res) => {
     const englishTitle = englishMeta && (normalize(englishMeta.title) !== normalize(title) || normalize(englishMeta.artist) !== normalize(artist))
         ? (parseOriginalSong(englishMeta.title).titles[0] || englishMeta.title) : null;
     const englishExpect = /[ぁ-ゟァ-ヿ]/.test(cleanTitle) ? 'ja' : null;
+    // 곡명에 가나가 있으면 일본어 가사만 채택 (로마자 표기 가사 제외. 예: 怪獣の花唄 → "Omoidasu no wa kimi no uta")
+    const titleExpect = englishExpect;
     if (englishTitle) {
         console.log(`[가사 검색] 🔤 영어 표기: ${englishTitle} / ${englishMeta.artist}`);
         // 영어 제목으로 찾으면 영어판 가사(예: アイドル → Idol)가 걸리므로, 원제가 일본어면 일본어 가사만 채택
@@ -409,7 +517,7 @@ app.get('/lyrics', async (req, res) => {
     // 커버 가수 본인 버전이 lrclib에 있으면 지금 재생 중인 음원과 타이밍이 정확히 일치하므로 최우선
     // (곡명만으로 검색하면 결과가 20개로 잘려 커버 버전이 빠지는 경우가 많음)
     for (const t of [...new Set([...original.tracks, ...original.titles, cleanTitle])].slice(0, 2)) {
-        for (const a of coverArtists.slice(0, 3)) queries.push([{ track_name: t, artist_name: a }, null]);
+        for (const a of coverArtists.slice(0, 3)) queries.push([{ track_name: t, artist_name: a }, titleExpect]);
     }
     // "가수 - 곡명"의 순서를 알 수 없으므로 (원제+원곡 가수) 조합을 모두 먼저 시도한 뒤 원제 단독 검색
     for (const track of original.tracks) {
@@ -417,12 +525,12 @@ app.get('/lyrics', async (req, res) => {
     }
     // 제목에 원곡 가수가 적힌 경우 (예: "W/X/Y (Tani Yuuki)", "Henceforth - Orangestar")
     for (const t of original.titles) {
-        for (const a of original.artists) if (a !== t) queries.push([{ track_name: t, artist_name: a }, null]);
+        for (const a of original.artists) if (a !== t) queries.push([{ track_name: t, artist_name: a }, titleExpect]);
     }
     for (const track of original.tracks) queries.push([{ track_name: track }, 'ja']);
-    queries.push([{ track_name: cleanTitle, artist_name: cleanArtist }, null]);
-    for (const t of original.titles) queries.push([{ track_name: t }, null]);
-    queries.push([{ track_name: cleanTitle }, null]);
+    queries.push([{ track_name: cleanTitle, artist_name: cleanArtist }, titleExpect]);
+    for (const t of original.titles) queries.push([{ track_name: t }, titleExpect]);
+    queries.push([{ track_name: cleanTitle }, titleExpect]);
     if (englishTitle) queries.push([{ track_name: englishTitle }, englishExpect]);
 
     // 같은 곡명의 다른 가수 곡(예: ライラック / 美波)을 피하기 위해, 제목에서 알아낸 원곡 가수와 일치하는 결과를 우선
@@ -453,13 +561,24 @@ app.get('/lyrics', async (req, res) => {
     // 커버가 아니면 유튜브 뮤직 가수와 그 영어 표기(예: 아카네 리제 / Akane Lize)도 비교 → 다른 가수의 동명곡(예: Festa / Alex Britti) 차단
     const compareArtists = isCover ? realOriginalArtists : [...realOriginalArtists, cleanArtist, englishMeta?.artist].filter(Boolean);
     const compareScripts = new Set(compareArtists.flatMap(a => [...scriptsOf(a || '')]));
+    // 제목 앞 【아야츠노 유니】처럼 괄호 안에 커버 가수 본인 이름이 적힌 경우는 원곡 가수가 아니므로 제외
+    const performerNames = [cleanArtist, artist || '', ...coverArtists].map(normalize).filter(n => n.length >= 2);
+    const isPerformer = (a) => { const n = normalize(a); return !!n && performerNames.some(p => p.includes(n) || n.includes(p)); };
+    const originalArtistScripts = [...new Set(realOriginalArtists.filter(a => !isPerformer(a)).flatMap(a => [...scriptsOf(a)]))].filter(sc => sc !== 'latin');
+    const lyricsMatchOriginalArtistScript = (lyrics) =>
+        originalArtistScripts.length === 0 || [...scriptsOf(lyrics)].some(sc => originalArtistScripts.includes(sc));
     const isSafeFallback = (r) => {
         if (!queryTitles.has(normalize(r.trackName))) return false;
         if (!durationClose(r)) return false;
         // 비교할 원곡 가수가 없으면 곡명 + 길이로만 판단
         if (compareArtists.length === 0) return true;
         // 같은 가수를 다른 문자로 표기한 경우만 허용 (예: 결속 밴드 ↔ 結束バンド / Kessoku Band)
-        return ![...scriptsOf(r.artistName || '')].some(sc => compareScripts.has(sc));
+        if ([...scriptsOf(r.artistName || '')].some(sc => compareScripts.has(sc))) return false;
+        // 제목에 적힌 원곡 가수 이름이 한글/일본어면 가사에도 그 문자가 있어야 같은 곡으로 봄
+        //   (예: BE SOMEBODY (육성재) cover ↔ "Be Somebody / slimdan"은 가수 이름 문자만 달라 통과했지만 가사가 전부 영어)
+        //   유튜브 뮤직 가수(커버 가수일 수 있음)는 기준에서 제외 (예: 怪獣の花唄 / 아이리 칸나 → 일본어 원곡 가사가 맞음)
+        if (r.syncedLyrics && !lyricsMatchOriginalArtistScript(r.syncedLyrics)) return false;
+        return true;
     };
 
     const MAX_LRCLIB_REQUESTS = 14;
@@ -468,6 +587,7 @@ app.get('/lyrics', async (req, res) => {
     let searchFailed = false; // lrclib 과부하(503) 등으로 검색 하나라도 실패했는지
     let lengthMismatch = null; // 가수는 맞지만 길이가 크게 다른 결과 (예: 티저/짧은 버전. 끝내 다른 결과가 없을 때만 사용)
     // 후보가 여럿이면 재생 중인 곡과 길이가 가장 가까운 것 우선 (같은 곡의 다른 버전/커버/티저 구분)
+    const exactTitlePool = [];
     const byDuration = (a, b) => playingSec ? Math.abs((a.duration || 1e9) - playingSec) - Math.abs((b.duration || 1e9) - playingSec) : 0;
     for (const [params, expectLang] of queries) {
         const key = JSON.stringify(params);
@@ -476,6 +596,8 @@ app.get('/lyrics', async (req, res) => {
         tried.add(key);
         try {
             const results = await searchLrclib(params);
+            // 원제 단독 검색 결과는 '원곡 가수 다수결' 마지막 수단용으로 모아 둠
+            if (!params.artist_name && original.tracks.includes(params.track_name)) exactTitlePool.push(...results);
             const candidates = (knownArtists.length > 0 ? results.filter(artistMatches) : results).sort(byDuration);
             const bestMatch = findBestLyrics(candidates.filter(durationClose), expectLang, params.track_name);
             if (bestMatch) {
@@ -488,6 +610,55 @@ app.get('/lyrics', async (req, res) => {
             searchFailed = true;
             console.error("가사 검색 실패:", e.message);
         }
+    }
+
+    // [2순위] 추가 가사 제공처: Spotify(Musixmatch) → Apple Music → NetEase → QQ Music → KuGou
+    //   모두 동시에 검색하고, 찾은 것 중 우선순위가 가장 높은 제공처의 가사를 사용
+    {
+        const extraQueries = [...new Set([
+            original.tracks[0] ? `${original.tracks[0]} ${realOriginalArtists[0] || ''}`.trim() : null, // 커버곡: 일본어 원제 + 원곡 가수
+            // 제목 괄호 안의 원곡 가수 (예: "BE SOMEBODY (육성재) / 아라하시 타비 Cover" → "BE SOMEBODY 육성재")
+            realOriginalArtists[0] ? `${cleanTitle} ${realOriginalArtists[0]}` : null,
+            `${cleanTitle} ${cleanArtist}`.trim(),
+            englishTitle && englishMeta?.artist ? `${englishTitle} ${englishMeta.artist}` : null,
+        ].filter(Boolean))].slice(0, 2);
+        const queryTitleScripts = new Set([cleanTitle, ...original.tracks, ...original.titles, englishTitle || ''].flatMap(t => [...scriptsOf(t)]));
+        // 반주/노래방/짧은 버전/라이브 버전 (라이브는 가사 타이밍이 음원과 다름)
+        const VERSION_WORDS = /instrumental|\binst\b|karaoke|カラオケ|off vocal|伴奏|剪辑|anime size|\blive\b|라이브|现场/i;
+        const extraAccept = (r) => {
+            const nName = normalize(r.trackName);
+            if (!nName) return false;
+            // 반주/노래방/짧은 버전은 지금 듣는 곡도 그 버전일 때만
+            if (VERSION_WORDS.test(r.trackName) && !VERSION_WORDS.test(title)) return false;
+            if (!durationClose(r)) return false;
+            const titleOk = [...queryTitles].some(q => q && (nName.includes(q) || q.includes(nName)));
+            // 곡명이 언어만 다른 경우(예: ライラック ↔ Lilac): 가수가 같고 길이가 3초 이내로 거의 같으며,
+            // 곡명이 검색한 어떤 제목과도 다른 문자(한글/일본어/영문)로 쓰였을 때만 같은 곡으로 봄
+            // (같은 문자인데 곡명이 다르면 같은 가수의 다른 곡. 예: 맨드라미 ↔ 한참 외로워 하던 사람은 결국 고양이가 되어서)
+            const sameLength = playingSec && r.duration && Math.abs(r.duration - playingSec) <= 3;
+            // 한자만으로 된 제목은 중국어 제목일 수 있어 제외 (예: To. X ↔ 噩梦 같은 가수의 다른 곡)
+            const otherScript = /[ぁ-ゟァ-ヿ가-힣a-zA-Z]/.test(r.trackName) && ![...scriptsOf(r.trackName)].some(sc => queryTitleScripts.has(sc));
+            if (artistMatches(r) && (titleOk || (sameLength && otherScript))) return true;
+            // 가수를 확인하지 못한 결과는 곡 길이로라도 확인돼야 함 (QQ Music 등은 길이 정보가 없어
+            // 길이 검사가 그냥 통과됨 → 같은 제목의 다른 사람 커버가 붙음. 예: Alice in 冷凍庫 / めありー)
+            if (!r.duration || !isSafeFallback(r)) return false;
+            r.unverifiedArtist = true; // 가사를 받은 뒤 가사 문자로 한 번 더 확인 (searchExtraProvider)
+            return true;
+        };
+        // 가수를 확인하지 못한 결과: 원곡 가수 이름이 한글/일본어면 가사에도 그 문자가 있어야 함 (isSafeFallback과 같은 기준)
+        const verifyExtraLyrics = (c, lyrics) => {
+            return !c.unverifiedArtist || lyricsMatchOriginalArtistScript(lyrics);
+        };
+        const extraExpect = (original.tracks.length > 0 || /[ぁ-ゟァ-ヿ]/.test(cleanTitle)) ? 'ja' : null;
+        const found = await Promise.all(EXTRA_PROVIDERS.map(p =>
+            withTimeout(searchExtraProvider(p, extraQueries, extraAccept, byDuration, extraExpect, verifyExtraLyrics).catch(() => null), EXTRA_PROVIDER_BUDGET_MS)));
+        const bestIdx = found.findIndex(Boolean);
+        if (bestIdx >= 0) {
+            const { lyrics, match } = found[bestIdx];
+            console.log(`[가사 검색] 🧩 ${EXTRA_PROVIDERS[bestIdx].label} 가사 사용 (${match.name} / ${match.artist})`);
+            return res.json({ lyrics, source: EXTRA_PROVIDERS[bestIdx].label });
+        }
+        console.log(`[가사 검색] 🧩 추가 제공처에도 가사 없음 (검색어: ${extraQueries.join(' | ')})`);
     }
 
     // 원곡 가수를 확인하지 못했지만 곡명이 일치하는 가사 (예: 가수 표기가 한국어/일본어로 달라 매칭 실패)
@@ -517,6 +688,27 @@ app.get('/lyrics', async (req, res) => {
         const candidates = pageCaptions.has(videoId) ? [] : await findMusicVideoIds(cleanTitle, cleanArtist, videoId);
         const lyrics = await requestPageCaptions(videoId, langs, candidates);
         if (lyrics) return res.json({ lyrics, source: 'youtube' });
+    }
+
+    // [최후] 원곡 가수 다수결: 제목에 원곡 가수가 없고 커버라서 길이도 다른 경우 (예: "Alice in 冷凍庫" 라이브 커버 273초 ↔ 원곡 342초)
+    //   원제로만 검색한 결과 중 곡명이 정확히 같은 싱크 가사가 2개 이상이고, 그 절반 이상이 같은 가수면 그 가수의 원곡으로 봄
+    //   (커버는 전주 길이 등이 달라 싱크가 어긋날 수 있음 → ↑/↓ 키로 조절)
+    {
+        const sameTitle = exactTitlePool.filter(r => r.syncedLyrics && original.tracks.some(t => normalize(t) === normalize(r.trackName))
+            && (!titleExpect || detectTextLang(r.syncedLyrics) === titleExpect)); // 일본어 제목이면 일본어 가사만 (로마자 표기 제외)
+        // 가수 칸의 이름들 (예: "めありー/Orangestar", "Orangestar feat.IA" → 각각의 이름)
+        const artistNames = (r) => [...new Set((r.artistName || '').split(/\s*[\/&,、]\s*|\s*\b(?:feat|ft)\.?\s*/i).map(normalize).filter(Boolean))];
+        // 결과마다 등장한 이름을 세어 가장 많이 나온 이름을 원곡 가수로 봄
+        const counts = new Map();
+        for (const r of sameTitle) for (const n of artistNames(r)) counts.set(n, (counts.get(n) || 0) + 1);
+        const [topArtist, topCount] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0] || [];
+        if (topArtist && sameTitle.length >= 2 && topCount * 2 >= sameTitle.length) {
+            // 그 가수가 첫 번째 이름인 결과(원곡) 우선, 그다음 재생 중인 곡과 길이가 가까운 순
+            const pick = sameTitle.filter(r => artistNames(r).includes(topArtist))
+                .sort((a, b) => (artistNames(b)[0] === topArtist) - (artistNames(a)[0] === topArtist) || byDuration(a, b))[0];
+            console.log(`[가사 검색] 📜 lrclib 가사 사용 - 원곡 가수 추정(${topCount}/${sameTitle.length}건) (${pick.trackName} / ${pick.artistName}, ${pick.duration}s)`);
+            return res.json({ lyrics: pick.syncedLyrics, source: 'lrclib' });
+        }
     }
 
     res.json({ lyrics: null, source: null });
