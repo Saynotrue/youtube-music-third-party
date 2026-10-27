@@ -30,6 +30,23 @@ body {
     overflow: hidden;
     -webkit-app-region: drag;
     margin: 0;
+    /* 위젯이므로 글자 선택(드래그해서 파랗게 칠해지는 것)과 글자 위 텍스트 커서를 막음 */
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: default;
+}
+
+/* 설정 창 입력칸은 예외 (글자 입력·선택 가능) */
+input,
+textarea {
+    -webkit-user-select: text;
+    user-select: text;
+    cursor: text;
+}
+
+input[type="range"],
+input[type="checkbox"] {
+    cursor: pointer;
 }
 
 /* ═════════════════════════════════════════════════════════════
@@ -1280,13 +1297,16 @@ body.fullscreen-mode #current-lyric,
 body.fullscreen-mode #next-lyric,
 body.fullscreen-mode #next2-lyric {
     /* 빈 줄(곡 시작/끝)도 자리를 유지해 줄 위치와 흐림 경계가 흔들리지 않게 함 */
-    min-height: 1.25em;
+    /* 줄 사이 간격(24px)을 바깥 여백 대신 줄 안쪽 여백으로 줘서, 간격 위에서도 손가락 커서가 나오고 누르면 그 가사로 이동
+       (box-sizing: border-box라 최소 높이에 안쪽 여백 24px을 더해 빈 줄도 글자 줄과 같은 높이를 유지) */
+    min-height: calc(1.25em + 24px);
     position: static !important;
     left: auto !important;
     text-align: left !important;
     white-space: normal !important;
     width: 100% !important;
-    margin: 15px 0 !important;
+    margin: 0 !important;
+    padding: 12px 0 !important;
     text-shadow: none !important;
     transition: opacity 0.3s ease-in-out !important;
     transform-origin: left center !important;

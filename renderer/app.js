@@ -477,6 +477,8 @@ function animateLyricScroll(els, texts) {
         Object.assign(ghost.style, {
             left: `${oldRects[0].left}px`, top: `${oldRects[0].top}px`, width: `${oldRects[0].width}px`,
             fontSize: styles[0].fontSize, fontWeight: styles[0].fontWeight, fontFamily: styles[0].fontFamily,
+            // 줄 영역(rect)에 안쪽 여백이 포함되므로 복제본에도 같은 여백을 줘야 글자 위치가 맞음
+            paddingTop: styles[0].paddingTop, paddingBottom: styles[0].paddingBottom, boxSizing: 'border-box',
             lineHeight: styles[0].lineHeight, color: colors[0], textAlign: styles[0].textAlign,
         });
         document.body.appendChild(ghost);
@@ -522,10 +524,12 @@ function updateLyricEdgeMask(container, els) {
     const box = container.getBoundingClientRect();
     const first = els[0].getBoundingClientRect();
     const lastRect = els[els.length - 1].getBoundingClientRect();
-    container.style.setProperty('--fade-top-start', `${Math.max(0, first.top - box.top)}px`);
-    container.style.setProperty('--fade-top-end', `${Math.max(0, first.bottom - box.top)}px`);
-    container.style.setProperty('--fade-bottom-start', `${Math.max(0, lastRect.top - box.top)}px`);
-    container.style.setProperty('--fade-bottom-end', `${Math.max(0, lastRect.bottom - box.top)}px`);
+    // 줄 영역에는 위아래 안쪽 여백이 있으므로 글자 부분만 기준으로 흐림 경계를 잡음
+    const pad = parseFloat(getComputedStyle(els[0]).paddingTop) || 0;
+    container.style.setProperty('--fade-top-start', `${Math.max(0, first.top + pad - box.top)}px`);
+    container.style.setProperty('--fade-top-end', `${Math.max(0, first.bottom - pad - box.top)}px`);
+    container.style.setProperty('--fade-bottom-start', `${Math.max(0, lastRect.top + pad - box.top)}px`);
+    container.style.setProperty('--fade-bottom-end', `${Math.max(0, lastRect.bottom - pad - box.top)}px`);
 }
 
 function updateLyrics(prev, current, next, prev2 = '', next2 = '') {
