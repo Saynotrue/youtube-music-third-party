@@ -411,13 +411,15 @@ function parseLRC(lrc) {
 const LYRIC_INTRO_MARK = '♪';
 const LYRIC_INTRO_IDX = -100; // lastLyricIdx 초기값(-1)과 겹치지 않는 값
 
+const lyricLabel = (i) => currentLyrics[i]?.text || '';
+
 function getLyricContext(progress) {
     if (currentLyrics.length > 0 && progress < currentLyrics[0].time) {
         return {
             prev2: '', prev: '',
             current: LYRIC_INTRO_MARK,
-            next: currentLyrics[0].text,
-            next2: currentLyrics[1]?.text || '',
+            next: lyricLabel(0),
+            next2: lyricLabel(1),
             idx: LYRIC_INTRO_IDX,
         };
     }
@@ -427,11 +429,11 @@ function getLyricContext(progress) {
         else break;
     }
     return {
-        prev2: currentLyrics[idx - 2]?.text || '',
-        prev: currentLyrics[idx - 1]?.text || '',
-        current: currentLyrics[idx]?.text || '',
-        next: currentLyrics[idx + 1]?.text || '',
-        next2: currentLyrics[idx + 2]?.text || '',
+        prev2: lyricLabel(idx - 2),
+        prev: lyricLabel(idx - 1),
+        current: lyricLabel(idx),
+        next: lyricLabel(idx + 1),
+        next2: lyricLabel(idx + 2),
         idx,
     };
 }
@@ -446,6 +448,8 @@ const LYRIC_EDGE_TRAVEL = 0.7;
 
 // els/texts: [이전2, 이전, 현재, 다음, 다음2] 순서
 function animateLyricScroll(els, texts) {
+    // 바뀐 게 없으면 그대로 둠. 진행 중인 애니메이션도 끊지 않음
+    if (els.every((el, i) => el.textContent === (texts[i] || ''))) return;
     els.forEach(el => { el.getAnimations().forEach(a => a.finish()); el.style.removeProperty('opacity'); el.style.removeProperty('transform'); });
     const container = document.getElementById('lyrics-container');
     const last = els.length - 1;
@@ -453,6 +457,7 @@ function animateLyricScroll(els, texts) {
     const oldTexts = els.map(el => el.textContent);
     // 한 줄씩 위로 넘어가는 경우만 스크롤 (현재 → 이전, 다음 → 현재)
     // 전주(♪) → 첫 가사로 넘어갈 때도 스크롤 (♪는 이전 줄로 가지 않고 사라짐)
+
     const isStep = !!oldTexts[2] && texts[2] === oldTexts[3] && (texts[1] === oldTexts[2] || oldTexts[2] === LYRIC_INTRO_MARK);
 
     if (!isStep) {
@@ -671,6 +676,21 @@ if (btnFullscreen) {
     btnFullscreen.addEventListener('click', toggleFullscreen);
 }
 
+// ─── 다음 곡 미리 준비: 지금 곡을 듣는 동안 대기열의 다음 곡 가사를 미리 찾아 둠 ───
+// (서버가 찾은 가사를 저장해 두므로 다음 곡이 시작되면 바로 표시됨)
+const PREFETCH_AFTER_MS = 15000; // 곡을 넘기며 둘러보는 중에는 미리 찾지 않도록, 지금 곡을 15초 이상 들었을 때만
+let prefetchedNextId = null;
+
+async function prefetchNextTrack(next) {
+    if (!next?.videoId || next.videoId === prefetchedNextId) return;
+    prefetchedNextId = next.videoId;
+    try {
+        const params = new URLSearchParams({ title: next.title, artist: next.artist || '', album: '', videoId: next.videoId });
+        if (next.duration) params.set('duration', String(Math.round(next.duration / 1000)));
+        await fetch(`http://127.0.0.1:8888/lyrics?${params}`);
+    } catch (e) { /* 미리 준비 실패는 무시 (곡이 시작되면 평소처럼 찾음) */ }
+}
+
 // 전체화면 가사 버튼: 가사 창 보이기/숨기기 (모서리가 둥근 사각형 말풍선 안에 가사 줄 모양 아이콘)
 const btnLyrics = document.getElementById('btn-lyrics');
 if (btnLyrics) {
@@ -855,18 +875,23 @@ document.addEventListener('keyup', (e) => {
 });
 
 let syncToastTimer = null;
-function showSyncToast() {
+// 화면 가운데(전체화면은 아래쪽)에 잠깐 뜨는 안내 문구
+function showToast(message, durationMs = 1200) {
     let toast = document.getElementById('sync-toast');
     if (!toast) {
         toast = document.createElement('div');
         toast.id = 'sync-toast';
         document.body.appendChild(toast);
     }
-    const ms = appConfig.syncOffset;
-    toast.textContent = `가사 싱크 ${ms > 0 ? '+' : ''}${ms}ms`;
+    toast.textContent = message;
     toast.classList.add('show');
     clearTimeout(syncToastTimer);
-    syncToastTimer = setTimeout(() => toast.classList.remove('show'), 1200);
+    syncToastTimer = setTimeout(() => toast.classList.remove('show'), durationMs);
+}
+
+function showSyncToast() {
+    const ms = appConfig.syncOffset;
+    showToast(`가사 싱크 ${ms > 0 ? '+' : ''}${ms}ms`);
 }
 
 // 🚨 곡 정보 상자 높이 실시간 추적 (버튼 겹침 완벽 방지)
@@ -893,6 +918,7 @@ async function syncWithServer() {
         const track = await fetch('http://127.0.0.1:8888/current-track').then(r => r.json());
         const fetchedAt = performance.now();
         applyRemoteVolume(track);
+        if (track.next && track.playing && track.progress > PREFETCH_AFTER_MS) prefetchNextTrack(track.next);
 
         // 진행 시간은 측정 시점 기준이므로, 그 뒤로 흐른 시간(전송·폴링 지연)만큼 보정
         if (track.playing && track.sampledAt) {

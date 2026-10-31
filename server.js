@@ -426,8 +426,18 @@ async function searchExtraProvider({ provider }, queries, accept, byDuration, ex
 }
 
 // ─── 🚨 가사 Fetch (스마트 필터 및 커버 지원) ─────────────────
+// 찾은 가사를 영상별로 잠시 보관 (다음 곡을 미리 찾아 두면 곡이 바뀌었을 때 바로 돌려줌)
+const lyricsResultCache = new Map();
+
 app.get('/lyrics', async (req, res) => {
     const { title = '', artist, album, videoId } = req.query;
+    if (videoId && lyricsResultCache.has(videoId)) return res.json(lyricsResultCache.get(videoId));
+    // 가사를 찾은 응답만 보관 (못 찾은 경우는 다음에 다시 시도: 재생 중일 때는 유튜브 자막 단계가 추가로 있음)
+    const sendJson = res.json.bind(res);
+    res.json = (body) => {
+        if (videoId && body?.lyrics) cacheSet(lyricsResultCache, videoId, body);
+        return sendJson(body);
+    };
 
     // 🚨 1. 가수 이름 정제: " 및 ", " & ", " feat." 등을 잘라내고 메인 가수 1명만 추출!
     let cleanArtist = artist || '';
@@ -553,7 +563,8 @@ app.get('/lyrics', async (req, res) => {
     // 커버곡: 유튜브 뮤직 가수는 커버 가수라 원곡 가수와 다른 게 당연함 (예: Beyond the way / 하나코 나나 cover → 원곡 Giga).
     //   제목에 원곡 가수도 없으면 가수 대신 곡 길이로 확인 (커버는 보통 원곡과 길이가 비슷함)
     const isCover = /cover|커버|歌ってみた/i.test(title);
-    const playingSec = playerState.videoId === videoId && playerState.duration ? playerState.duration / 1000 : 0;
+    // 곡 길이: 재생 중인 곡이면 플레이어 정보, 다음 곡을 미리 찾을 때는 위젯이 알려준 길이(초)
+    const playingSec = playerState.videoId === videoId && playerState.duration ? playerState.duration / 1000 : (Number(req.query.duration) || 0);
     const durationClose = (r) => !playingSec || !r.duration || Math.abs(r.duration - playingSec) <= 15;
     // 표기 문자 비교에 쓸 가수: 곡명으로 쓰인 후보(예: "(星座になれたら : 결속 밴드)"의 星座になれたら)는 제외하고,
     //   커버곡이면 커버 가수(유튜브 뮤직 가수)도 제외 → 원곡 가수만 남김

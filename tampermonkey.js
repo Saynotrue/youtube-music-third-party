@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Music Ultimate Integration (Ultra Light v9.0)
 // @namespace    http://tampermonkey.net/
-// @version      9.0
+// @version      9.1
 // @author       You
 // @match        https://music.youtube.com/*
 // @match        https://www.youtube.com/embed/*
@@ -263,6 +263,25 @@
         return { title: title.trim(), artist: artist.trim(), album: album.trim(), albumArt, videoId: videoData.video_id || '' };
     }
 
+    // 재생 목록(대기열)에서 다음 곡 (위젯이 다음 곡 가사·번역을 미리 준비하는 데 사용)
+    function getNextTrack() {
+        const items = [...document.querySelectorAll('ytmusic-player-queue ytmusic-player-queue-item')];
+        const current = items.findIndex(item => item.hasAttribute('selected') || item.selected);
+        const next = current >= 0 ? items[current + 1] : null;
+        if (!next) return null;
+        const text = (sel) => (next.querySelector(sel)?.getAttribute('title') || next.querySelector(sel)?.textContent || '').trim();
+        const videoId = next.data?.videoId || next.__data?.data?.videoId
+            || next.querySelector('a[href*="watch?v="]')?.href.match(/[?&]v=([\w-]{11})/)?.[1] || '';
+        const title = text('.song-title');
+        if (!videoId || !title) return null;
+        return {
+            title,
+            artist: text('.byline').split(' • ')[0].replace(/\s+-\s+Topic$/i, ''),
+            videoId,
+            duration: parseTimeToMs(text('.duration')),
+        };
+    }
+
     // =====================================================================
     // 1. 상태 및 가사 전송
     // =====================================================================
@@ -312,7 +331,8 @@
             lyric: currentLyric,
             // 위젯의 소리 조절 슬라이더에 현재 볼륨 표시 (0~100)
             volume: player?.getVolume ? player.getVolume() : (video ? Math.round(video.volume * 100) : undefined),
-            muted: player?.isMuted ? player.isMuted() : !!video?.muted
+            muted: player?.isMuted ? player.isMuted() : !!video?.muted,
+            next: getNextTrack()
         };
 
         fetch("http://127.0.0.1:8888/update-state", {
