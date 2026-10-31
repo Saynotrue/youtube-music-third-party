@@ -573,7 +573,11 @@ app.get('/lyrics', async (req, res) => {
         // 비교할 원곡 가수가 없으면 곡명 + 길이로만 판단
         if (compareArtists.length === 0) return true;
         // 같은 가수를 다른 문자로 표기한 경우만 허용 (예: 결속 밴드 ↔ 結束バンド / Kessoku Band)
-        if ([...scriptsOf(r.artistName || '')].some(sc => compareScripts.has(sc))) return false;
+        const resultArtistScripts = [...scriptsOf(r.artistName || '')];
+        // 한글/일본어/영문이 아닌 문자로만 된 가수(예: 러시아어 "ЛСП")는 표기만 다른 같은 가수로 볼 근거가 없음
+        //   (예: Pit / NANAOAKARI ↔ "PiT / ЛСП" 러시아 노래가 통과하던 문제)
+        if (resultArtistScripts.length === 0) return false;
+        if (resultArtistScripts.some(sc => compareScripts.has(sc))) return false;
         // 제목에 적힌 원곡 가수 이름이 한글/일본어면 가사에도 그 문자가 있어야 같은 곡으로 봄
         //   (예: BE SOMEBODY (육성재) cover ↔ "Be Somebody / slimdan"은 가수 이름 문자만 달라 통과했지만 가사가 전부 영어)
         //   유튜브 뮤직 가수(커버 가수일 수 있음)는 기준에서 제외 (예: 怪獣の花唄 / 아이리 칸나 → 일본어 원곡 가사가 맞음)

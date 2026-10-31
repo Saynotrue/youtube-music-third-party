@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         YouTube Music Ultimate Integration (Ultra Light v7.1)
+// @name         YouTube Music Ultimate Integration (Ultra Light v9.0)
 // @namespace    http://tampermonkey.net/
 // @version      9.0
 // @author       You
