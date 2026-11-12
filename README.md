@@ -21,9 +21,9 @@
 
 | 운영체제 | 파일 |
 |---|---|
-| macOS (Apple Silicon: M1 이상) | `Music Lyrics Widget-<버전>-arm64.dmg` |
-| Windows (설치형) | `Music Lyrics Widget Setup <버전>.exe` |
-| Windows (설치 없이 실행) | `Music Lyrics Widget <버전>.exe` |
+| macOS (Apple Silicon: M1 이상) | `Music.Lyrics.Widget-<버전>-arm64.dmg` |
+| Windows (설치형) | `Music.Lyrics.Widget.Setup.<버전>.exe` |
+| Windows (설치 없이 실행) | `Music.Lyrics.Widget.<버전>.exe` |
 
 #### macOS
 
@@ -45,8 +45,8 @@
 
 #### Windows
 
-1. **설치형**: `Music Lyrics Widget Setup <버전>.exe`를 실행해 설치합니다.
-   **설치 없이 실행**: `Music Lyrics Widget <버전>.exe`를 원하는 폴더에 두고 바로 실행합니다.
+1. **설치형**: `Music.Lyrics.Widget.Setup.<버전>.exe`를 실행해 설치합니다.
+   **설치 없이 실행**: `Music.Lyrics.Widget.<버전>.exe`를 원하는 폴더에 두고 바로 실행합니다.
 2. **"Windows의 PC 보호" (SmartScreen)** 창이 뜨면 **추가 정보 → 실행**을 누릅니다. 코드 서명을 하지 않은 앱이라 뜨는 안내입니다.
 3. 혹시 **Windows 방화벽** 허용 창이 뜨면 **허용**을 눌러도 됩니다. 위젯은 이 컴퓨터 안(127.0.0.1)에서만 브라우저와 통신하므로 외부 네트워크에는 열리지 않습니다.
 

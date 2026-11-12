@@ -26,6 +26,14 @@
   "build": {
     "appId": "com.music-lyrics-widget.app",
     "productName": "Music Lyrics Widget",
+    "files": [
+      "main.js",
+      "server.js",
+      "renderer/**/*",
+      "tray/**/*",
+      "vendor/**/*",
+      "package.json"
+    ],
     "directories": {
       "output": "dist"
     },
