@@ -1097,7 +1097,7 @@ app.post('/translate-ai', async (req, res) => {
 });
 
 // ─── 오디오 비주얼라이저 릴레이 ───────────────────────────
-const wss = new WebSocket.Server({ port: WS_PORT });
+const wss = new WebSocket.Server({ port: WS_PORT, host: '127.0.0.1' }); // 이 컴퓨터 안에서만 접속 (브라우저 → 위젯)
 
 wss.on('connection', (ws) => {
     ws.on('message', (message) => {
