@@ -54,6 +54,7 @@
         <span id="volume-value">100</span>
       </div>
       <button id="btn-lyrics" class="fs-icon-btn" title="가사" aria-label="가사"></button>
+      <button id="btn-translate" class="fs-icon-btn" title="가사 번역" aria-label="가사 번역"></button>
     </div>
   </div>
 
@@ -146,6 +147,19 @@
           <span id="offset-display">+600ms</span>
           <button id="offset-plus" class="stepper-btn">+100ms</button>
         </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-row-between">
+          <div class="settings-label">AI 가사 번역 · NVIDIA API 키</div>
+          <span id="nvidia-key-status" class="key-status">미설정</span>
+        </div>
+        <div class="stepper-row key-row">
+          <input id="nvidia-key-input" type="password" placeholder="nvapi-로 시작하는 키 붙여넣기" autocomplete="off" spellcheck="false">
+          <button id="nvidia-key-save" class="stepper-btn">저장</button>
+          <button id="nvidia-key-clear" class="stepper-btn">삭제</button>
+        </div>
+        <div class="shortcut-hint">build.nvidia.com에서 무료로 발급 · 이 컴퓨터에만 암호화해 저장 · 없으면 구글 번역만 사용</div>
       </div>
 
       <div class="s-divider"></div>

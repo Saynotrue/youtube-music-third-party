@@ -817,6 +817,42 @@ img {
     pointer-events: none;
 }
 
+/* 설정: NVIDIA API 키 입력 */
+.key-status {
+    padding-top: 10px;
+    font-size: 10px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.38);
+    letter-spacing: 0.2px;
+}
+
+.key-status.set {
+    color: #7ddc9a;
+}
+
+.key-row input {
+    flex: 1;
+    min-width: 0;
+    background: none;
+    border: none;
+    border-right: 1px solid rgba(255, 255, 255, 0.07);
+    outline: none;
+    color: #fff;
+    font-size: 12px;
+    padding: 9px 12px;
+    -webkit-app-region: no-drag;
+    -webkit-user-select: text;
+    user-select: text;
+}
+
+.key-row input::placeholder {
+    color: rgba(255, 255, 255, 0.25);
+}
+
+.key-row .stepper-btn + .stepper-btn {
+    border-left: 1px solid rgba(255, 255, 255, 0.07);
+}
+
 .shortcut-hint {
     font-size: 10px;
     color: rgba(255, 255, 255, 0.25);
@@ -889,6 +925,10 @@ body.settings-open #lp-mode {
 body.fullscreen-mode {
     background: var(--bg-color, #1a1a1a) !important;
     transition: background 0.8s ease-in-out !important;
+    /* 전체화면에서는 창을 끌어 옮길 일이 없으므로 창 드래그 영역을 끔
+       (드래그 영역 위에서는 마우스 움직임이 페이지에 전달되지 않아, 커서를 움직여도 숨긴 버튼이
+        가사 줄 같은 드래그 제외 영역에 닿을 때까지 나타나지 않았음) */
+    -webkit-app-region: no-drag;
 }
 
 /* ─── 🌈 움직이는 배경 (애플 뮤직 스타일) ─── */
@@ -963,7 +1003,9 @@ body.fullscreen-mode #lyrics-container {
     transition: opacity 0.45s ease 0.1s, transform 0.5s cubic-bezier(0.33, 0.5, 0.2, 1), visibility 0s;
 }
 
-/* 끌 때: 이동(0.5초)보다 빨리 사라지게 해 희미한 잔상이 남지 않게 함.
+/* 끌 때: 이동(0.5초)보다 훨씬 빨리 사라지게 함. 처음부터 빠르게 흐려지는 곡선(ease-out, 0.18초)이라
+   커버 높이보다 위·아래에 있는 가사 줄이 곡 제목·이퀄라이저 옆을 지나가기 전에 거의 사라짐
+   (ease-in 0.3초일 때는 처음에 거의 그대로 보여, 커버 아래 줄이 곡 정보 옆에 남아 보였음)
    이동 거리는 '커버 폭의 절반 - 24px'로 제한 → 가사 왼쪽 끝이 가운데 온 커버의 왼쪽 끝을 넘지 않음
    (가사 창 왼쪽 끝 = 화면 가운데, 커버는 화면 가운데 기준으로 폭의 절반만큼 왼쪽까지 덮음) */
 body.fullscreen-mode:not(.show-lyrics) #lyrics-container {
@@ -971,7 +1013,7 @@ body.fullscreen-mode:not(.show-lyrics) #lyrics-container {
     transform: translateX(calc(-1 * max(45vh, 300px) / 2 + 24px));
     visibility: hidden;
     pointer-events: none;
-    transition: opacity 0.3s ease-in, transform 0.5s cubic-bezier(0.33, 0.5, 0.2, 1), visibility 0s 0.5s;
+    transition: opacity 0.18s ease-out, transform 0.5s cubic-bezier(0.33, 0.5, 0.2, 1), visibility 0s 0.5s;
 }
 
 body.fullscreen-mode #album-art,
@@ -1005,7 +1047,8 @@ body.fullscreen-mode .fs-icon-btn {
     z-index: 10000;
     opacity: 1;
     -webkit-app-region: no-drag;
-    transition: background 0.2s ease, color 0.2s ease, transform 0.1s ease, opacity 0.4s ease;
+    /* 나타날 때(마우스를 움직임)는 바로 보이게 짧게, 숨겨질 때는 아래 .idle 규칙의 느린 페이드 */
+    transition: background 0.2s ease, color 0.2s ease, transform 0.1s ease, opacity 0.12s ease-out;
 }
 
 body.fullscreen-mode .fs-icon-btn:hover {
@@ -1025,6 +1068,54 @@ body.fullscreen-mode .fs-icon-btn.active {
 
 body.fullscreen-mode #btn-lyrics {
     right: 4vw;
+}
+
+/* 번역 버튼: 오른쪽 위 */
+body.fullscreen-mode #btn-translate {
+    top: 5vh;
+    bottom: auto;
+    right: 4vw;
+}
+
+/* 번역 중: 버튼이 천천히 깜빡임 */
+/* 문맥 번역(AI) 완료: 아이콘은 그대로 두고 "가"의 ㅏ 아랫부분을 지운 뒤 그 자리에 "AI"를 겹쳐 표시
+   (지우는 부분·글씨는 app.js의 아이콘 SVG 안에 있음: .tr-ai-cut / .tr-ai-label) */
+#btn-translate .tr-ai-cut {
+    opacity: 0;
+    transition: opacity 0.25s ease;
+}
+
+#btn-translate .tr-ai-label {
+    opacity: 0;
+    transform: scale(0.5);
+    transform-box: fill-box;
+    transform-origin: center;
+    transition: opacity 0.25s ease, transform 0.3s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+#btn-translate.ai .tr-ai-cut,
+#btn-translate.ai .tr-ai-label {
+    opacity: 1;
+    transform: none;
+}
+
+body.fullscreen-mode #btn-translate.loading {
+    animation: translate-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes translate-pulse {
+    50% { opacity: 0.35; }
+}
+
+/* 원문 아래 번역 줄 (전체화면 가사) */
+.lyric-tr {
+    display: block;
+    margin-top: 6px;
+    font-size: 0.5em;
+    font-weight: 500;
+    opacity: 0.75;
+    line-height: 1.35;
+    transform-origin: left top; /* 애니메이션 중에도 왼쪽 정렬 그대로 (가운데로 모이지 않게) */
 }
 
 /* 소리 버튼: 가사 버튼 왼쪽 */
@@ -1139,6 +1230,7 @@ body.fullscreen-mode.idle .fs-icon-btn,
 body.fullscreen-mode.idle #volume-popover {
     opacity: 0;
     pointer-events: none;
+    transition: opacity 0.5s ease; /* 숨겨질 때만 천천히 */
 }
 
 /* ─── 좌측: 앨범 아트 ─── */
@@ -1309,7 +1401,8 @@ body.fullscreen-mode #next2-lyric {
     padding: 12px 0 !important;
     text-shadow: none !important;
     transition: opacity 0.3s ease-in-out !important;
-    transform-origin: left center !important;
+    /* 위쪽 기준으로 커지고 작아짐: 번역 줄이 있어도 원문 쪽(가운데)으로 모이지 않고 줄 전체가 그대로 위로 이동 */
+    transform-origin: left top !important;
     /* transform/color는 !important를 쓰지 않음: 가사 스크롤 애니메이션(Web Animations, app.js animateLyricScroll)이 덮어쓸 수 있어야 함 */
     transform: none;
 }
@@ -1371,7 +1464,7 @@ body.fullscreen-mode .edge-lyric {
     margin: 0;
     pointer-events: none;
     white-space: normal;
-    transform-origin: left center;
+    transform-origin: left top;
     z-index: 2;
 }
 

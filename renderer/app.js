@@ -7,6 +7,7 @@ let currentLyrics = [];
 let lastTitle = '';
 let lastArtist = '';
 let isFetchingLyrics = false;
+let lyricsSettledTitle = ''; // 가사 찾기가 끝난(찾았거나 끝내 없음) 곡 — 그 전에는 다음 곡을 미리 준비하지 않음
 let lastLyricIdx = -1;
 let isPausedDisplayed = false;
 let lastLyricCheckTime = 0;
@@ -41,7 +42,8 @@ let appConfig = {
     globalShortcut: true,
     widgetStyle: 'eq',
     trayIcon: 'player',
-    showLyrics: false // 전체화면 가사 창 (기본: 숨김 → 곡 정보가 가운데)
+    showLyrics: false, // 전체화면 가사 창 (기본: 숨김 → 곡 정보가 가운데)
+    showTranslation: false // 전체화면 가사 번역 (원문 아래에 한국어 번역)
 };
 
 function initSettings() {
@@ -404,14 +406,55 @@ function parseLRC(lrc) {
         const text = line.replace(/\[\d{2}:\d{2}\.\d{2,3}\]/g, '').trim();
         if (text) times.forEach(t => result.push({ time: t, text }));
     }
-    return result.sort((a, b) => a.time - b.time);
+    result.sort((a, b) => a.time - b.time);
+    splitEmbeddedTranslation(result);
+    return result;
+}
+
+// lrclib에 한국 사용자가 올린 가사 중 한 줄에 "원문 / 한글 발음 / 한국어 번역"을 이어 붙인 경우가 있음
+//   예: "君にもらった思い出や温もりが / 키미니 모랏타 오모이데야 누쿠모리가 / 너에게 받은 추억과 온기가"
+//   → 원문만 가사로 보여 주고 마지막 칸은 번역으로 사용 (발음 칸은 버림). 곡 전체가 이 형식일 때만 적용
+const HANGUL_CHAR = /[가-힣]/;
+const FOREIGN_CHAR = /[ぁ-ゟァ-ヿ一-龥a-zA-Z]/;
+function splitEmbeddedTranslation(lines) {
+    const split = lines.map(l => {
+        const parts = l.text.split(/\s+\/\s+/);
+        return parts.length === 3 && FOREIGN_CHAR.test(parts[0]) && !HANGUL_CHAR.test(parts[0])
+            && HANGUL_CHAR.test(parts[1]) && HANGUL_CHAR.test(parts[2]) ? parts : null;
+    });
+    if (split.filter(Boolean).length < lines.length * 0.6) return;
+    lines.forEach((l, i) => {
+        if (!split[i]) return;
+        l.text = split[i][0].trim();
+        l.tr = split[i][2].trim();
+    });
+    lines.translationDone = true; // 번역이 이미 들어 있으므로 번역 서버에 보내지 않음
+    lines.embeddedTranslation = true;
 }
 
 // 첫 가사가 시작되기 전(전주) 상태: 현재 줄에 ♪를 띄우고 첫 가사는 다음 줄에서 대기
 const LYRIC_INTRO_MARK = '♪';
 const LYRIC_INTRO_IDX = -100; // lastLyricIdx 초기값(-1)과 겹치지 않는 값
 
-const lyricLabel = (i) => currentLyrics[i]?.text || '';
+// 번역을 켜면 각 줄 텍스트를 "원문 + 구분 문자 + 번역"으로 만들어 넘기고, 화면에 넣을 때 번역은 원문 아래 작은 줄로 그림
+// (줄 비교(한 줄씩 넘어가는지 판단)도 이 합친 텍스트로 하므로 번역이 나중에 도착해도 자연스럽게 갱신됨)
+const LYRIC_TR_SEP = '\u2063';
+function lyricLabel(i) {
+    const line = currentLyrics[i];
+    if (!line) return '';
+    return appConfig.showTranslation && line.tr ? `${line.text}${LYRIC_TR_SEP}${line.tr}` : line.text;
+}
+const plainLyric = (label) => (label || '').split(LYRIC_TR_SEP)[0];
+
+function setLyricText(el, label) {
+    el.dataset.key = label || '';
+    const [text, tr] = (label || '').split(LYRIC_TR_SEP);
+    if (!tr) { el.textContent = text; return; }
+    const trEl = document.createElement('span');
+    trEl.className = 'lyric-tr';
+    trEl.textContent = tr;
+    el.replaceChildren(document.createTextNode(text), trEl);
+}
 
 function getLyricContext(progress) {
     if (currentLyrics.length > 0 && progress < currentLyrics[0].time) {
@@ -447,22 +490,78 @@ const LYRIC_SCROLL_EASING = 'cubic-bezier(0.33, 0.5, 0.2, 1)';
 const LYRIC_EDGE_TRAVEL = 0.7;
 
 // els/texts: [이전2, 이전, 현재, 다음, 다음2] 순서
+// 번역 줄 등장/퇴장: 번역은 원문 줄에서 튀어나와 아래로 내려오고(끌 때는 왼쪽 정렬 그대로 위로 올라가며 사라짐),
+// 줄 높이가 바뀌어 위치가 달라지는 다른 줄들은 순간 이동 대신 새 자리로 미끄러지듯 이동 (FLIP)
+const TRANSLATION_ANIM_MS = 520;
+const TRANSLATION_POP_EASING = 'cubic-bezier(0.34, 1.4, 0.64, 1)'; // 살짝 튀어나왔다 자리 잡는 느낌
+let lyricAnimSeq = 0; // 가사 전환 순번 (번역 퇴장 애니메이션이 끝나기 전에 다음 전환이 오면 늦게 끝난 정리는 건너뜀)
+
+function animateTranslationChange(els, texts) {
+    const seq = lyricAnimSeq;
+    const container = document.getElementById('lyrics-container');
+    const removing = els.filter((el, i) => el.querySelector('.lyric-tr') && !(texts[i] || '').includes(LYRIC_TR_SEP));
+
+    const applyAndSlide = () => {
+        const oldRects = els.map(el => el.getBoundingClientRect());
+        const oldTr = els.map(el => el.querySelector('.lyric-tr')?.textContent ?? null);
+        els.forEach((el, i) => setLyricText(el, texts[i]));
+        updateLyricEdgeMask(container, els);
+        els.forEach((el, i) => {
+            const dy = oldRects[i].top - el.getBoundingClientRect().top;
+            if (Math.abs(dy) > 0.5) {
+                el.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }],
+                    { duration: TRANSLATION_ANIM_MS, easing: LYRIC_SCROLL_EASING });
+            }
+            // 새로 붙은 번역: 원문 바로 밑에서 작게 튀어나와 아래로 내려오며 나타남
+            const tr = el.querySelector('.lyric-tr');
+            // 번역 문구만 바뀜 (구글 번역 → 문맥 번역): 제자리에서 부드럽게 바뀜
+            if (tr && oldTr[i] !== null && oldTr[i] !== tr.textContent) {
+                tr.animate([{ opacity: 0, filter: 'blur(4px)' }, { opacity: 1, filter: 'none' }],
+                    { duration: 450, easing: 'ease-out', delay: i * 35, fill: 'backwards' });
+            }
+            if (tr && oldTr[i] === null) {
+                tr.animate([
+                    { opacity: 0, transform: 'translateY(-0.9em)' },
+                    { opacity: 1, transform: 'none' },
+                ], { duration: TRANSLATION_ANIM_MS, easing: TRANSLATION_POP_EASING, delay: 60 + i * 35, fill: 'backwards' });
+            }
+        });
+    };
+
+    if (removing.length === 0) { applyAndSlide(); return; }
+    // 번역 끄기: 번역 줄을 원문 쪽으로 올리며 먼저 사라지게 한 뒤 줄을 정리
+    const outs = removing.map(el => el.querySelector('.lyric-tr').animate([
+        { opacity: 1, transform: 'none' },
+        { opacity: 0, transform: 'translateY(-0.9em)' },
+    ], { duration: 220, easing: 'ease-in', fill: 'forwards' }));
+    Promise.all(outs.map(a => a.finished)).catch(() => { }).then(() => { if (seq === lyricAnimSeq) applyAndSlide(); });
+}
+
 function animateLyricScroll(els, texts) {
     // 바뀐 게 없으면 그대로 둠. 진행 중인 애니메이션도 끊지 않음
-    if (els.every((el, i) => el.textContent === (texts[i] || ''))) return;
-    els.forEach(el => { el.getAnimations().forEach(a => a.finish()); el.style.removeProperty('opacity'); el.style.removeProperty('transform'); });
+    if (els.every((el, i) => (el.dataset.key ?? el.textContent) === (texts[i] || ''))) return;
+    lyricAnimSeq++;
+    // 진행 중인 애니메이션(번역 줄 포함)을 끝낸 상태로 정리하고 시작
+    els.forEach(el => { el.getAnimations({ subtree: true }).forEach(a => a.finish()); el.style.removeProperty('opacity'); el.style.removeProperty('transform'); });
     const container = document.getElementById('lyrics-container');
     const last = els.length - 1;
 
-    const oldTexts = els.map(el => el.textContent);
+    const oldTexts = els.map(el => el.dataset.key ?? el.textContent);
     // 한 줄씩 위로 넘어가는 경우만 스크롤 (현재 → 이전, 다음 → 현재)
     // 전주(♪) → 첫 가사로 넘어갈 때도 스크롤 (♪는 이전 줄로 가지 않고 사라짐)
+
+    // 원문은 그대로이고 번역만 붙거나 떨어진 경우 (번역 도착 / 번역 버튼 켜고 끄기)
+    const sameOriginals = texts.every((t, i) => plainLyric(t) === plainLyric(oldTexts[i]));
+    if (sameOriginals && texts.some((t, i) => t !== oldTexts[i])) {
+        animateTranslationChange(els, texts);
+        return;
+    }
 
     const isStep = !!oldTexts[2] && texts[2] === oldTexts[3] && (texts[1] === oldTexts[2] || oldTexts[2] === LYRIC_INTRO_MARK);
 
     if (!isStep) {
         // 곡 변경/탐색 등: 짧게 겹쳐 바뀌는 페이드 (빈 간격 없음)
-        els.forEach((el, i) => { el.textContent = texts[i]; });
+        els.forEach((el, i) => setLyricText(el, texts[i]));
         updateLyricEdgeMask(container, els);
         els.forEach(el => el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 285, easing: 'ease-out' }));
         return;
@@ -495,7 +594,7 @@ function animateLyricScroll(els, texts) {
         ).onfinish = () => ghost.remove();
     }
 
-    els.forEach((el, i) => { el.textContent = texts[i]; });
+    els.forEach((el, i) => setLyricText(el, texts[i]));
     const newRects = els.map(el => el.getBoundingClientRect());
     updateLyricEdgeMask(container, els);
 
@@ -552,7 +651,7 @@ function updateLyrics(prev, current, next, prev2 = '', next2 = '') {
 
     if (isFull && fullEls.every(Boolean)) {
         animateLyricScroll(fullEls, [prev2, prev, current, next, next2]);
-        if (lpCurrentEl) lpCurrentEl.textContent = current;
+        if (lpCurrentEl) lpCurrentEl.textContent = plainLyric(current);
         return;
     }
 
@@ -567,16 +666,15 @@ function updateLyrics(prev, current, next, prev2 = '', next2 = '') {
         if (document.body.classList.contains('fullscreen-mode') && fullEls.every(Boolean)) {
             [prevEl, currentEl, nextEl].forEach(el => el.style.removeProperty('opacity'));
             animateLyricScroll(fullEls, [prev2, prev, current, next, next2]);
-            if (lpCurrentEl) { lpCurrentEl.textContent = current; lpCurrentEl.style.opacity = '1'; }
+            if (lpCurrentEl) { lpCurrentEl.textContent = plainLyric(current); lpCurrentEl.style.opacity = '1'; }
             return;
         }
 
-        if (prevEl) prevEl.textContent = prev;
-        if (currentEl) currentEl.textContent = current;
-        if (nextEl) nextEl.textContent = next;
-        if (prev2El) prev2El.textContent = prev2;
-        if (next2El) next2El.textContent = next2;
-        if (lpCurrentEl) lpCurrentEl.textContent = current;
+        // 바 모드는 한 줄에 가로로 놓이므로 번역 없이 원문만
+        [[prevEl, prev], [currentEl, current], [nextEl, next], [prev2El, prev2], [next2El, next2]].forEach(([el, label]) => {
+            if (el) setLyricText(el, plainLyric(label));
+        });
+        if (lpCurrentEl) lpCurrentEl.textContent = plainLyric(current);
 
         if (container && currentEl && prevEl && nextEl) {
             const containerCenter = container.offsetWidth / 2;
@@ -594,6 +692,9 @@ function updateLyrics(prev, current, next, prev2 = '', next2 = '') {
 }
 
 // 🚨 매개변수에 videoId를 추가 (기본값 null)
+// lrclib 과부하(503)로 서버가 검색을 미룬 경우(retry) 다시 묻는 간격: 과부하가 풀리도록 점점 길게
+const LYRICS_BUSY_RETRY_DELAYS = [5000, 10000, 20000, 30000];
+
 async function fetchLyrics(title, artist, album, videoId = null, retryCount = 0) {
     if (title !== lastTitle || artist !== lastArtist) return;
 
@@ -608,23 +709,34 @@ async function fetchLyrics(title, artist, album, videoId = null, retryCount = 0)
         if (videoId) {
             url += `&videoId=${encodeURIComponent(videoId)}`;
         }
+        // 마지막 시도: 서버가 더 미루지 않고 유튜브 자막 등 남은 방법까지 써서 결론을 냄
+        if (retryCount >= LYRICS_BUSY_RETRY_DELAYS.length) url += '&final=1';
 
         const res = await fetch(url).then(r => r.json());
         if (title !== lastTitle || artist !== lastArtist) return;
 
         currentLyrics = res.lyrics ? parseLRC(res.lyrics) : [];
+        updateTranslateBadge();
         if (currentLyrics.length > 0) {
+            lyricsSettledTitle = title;
             lastLyricIdx = -1;
+            requestTranslation();
         } else {
             // 🚨 2. 재시도할 때도 videoId를 잊지 않고 넘겨줍니다.
             // 서버가 lrclib 검색 실패로 결과를 보류한 경우(retry)는 과부하가 풀리도록 조금 더 기다렸다가 재시도
-            if (retryCount < 2) { setTimeout(() => fetchLyrics(title, artist, album, videoId, retryCount + 1), res.retry ? 5000 : 2000); return; }
+            if (res.retry && retryCount < LYRICS_BUSY_RETRY_DELAYS.length) {
+                setTimeout(() => fetchLyrics(title, artist, album, videoId, retryCount + 1), LYRICS_BUSY_RETRY_DELAYS[retryCount]);
+                return;
+            }
+            if (!res.retry && retryCount < 2) { setTimeout(() => fetchLyrics(title, artist, album, videoId, retryCount + 1), 2000); return; }
+            lyricsSettledTitle = title;
             updateLyrics('', '가사 없음', '');
         }
     } catch (e) {
         if (title !== lastTitle || artist !== lastArtist) return;
         // 🚨 3. 에러로 인한 재시도 시에도 videoId를 넘겨줍니다.
         if (retryCount < 2) { setTimeout(() => fetchLyrics(title, artist, album, videoId, retryCount + 1), 2000); return; }
+        lyricsSettledTitle = title;
         updateLyrics('', '가사 없음', '');
     } finally {
         isFetchingLyrics = false;
@@ -636,7 +748,7 @@ function splitTitleParts(title) {
     const masked = title.replace(/[\[(（【][^\])）】]*[\])）】]/g, m => '\0'.repeat(m.length));
     const parts = [];
     let start = 0;
-    for (const m of masked.matchAll(/\s+[\/|｜]\s+|\s*ㅣ\s*/g)) {
+    for (const m of masked.matchAll(/\s+[\/|｜]\s+|\s*[ㅣ┃│]\s*/g)) {
         parts.push(title.slice(start, m.index));
         start = m.index + m[0].length;
     }
@@ -653,8 +765,16 @@ function displayTitle(title) {
     const raw = (title || '').trim();
     const quoted = raw.match(QUOTED_TITLE);
     if (quoted) return quoted[1].trim();
-    if (!/\s[\/|｜]\s|ㅣ|[\[【]/.test(raw)) return raw;
-    const songPart = splitTitleParts(raw)[0];
+    if (!/\s[\/|｜]\s|[ㅣ┃│]|[\[【]/.test(raw)) return raw;
+    const parts = splitTitleParts(raw);
+    let songPart = parts[0];
+    // "원곡 가수 / 곡명 (原題) ┃ 커버 가수" 형태는 두 번째 부분이 곡명 (서버 parseOriginalSong과 같은 기준)
+    // 예: "Vaundy / 날아오를 때 (飛ぶ時)┃Cover by Hebi" → 날아오를 때 (飛ぶ時)
+    if (parts.length >= 2 && !/[\[(（【]/.test(parts[0]) && !/[ぁ-ゟァ-ヿ一-龥]/.test(parts[0])
+        && /^[^\[(（【]+[\[(（【][^\])）】]*[ぁ-ゟァ-ヿ一-龥][^\])）】]*[\])）】]\s*$/.test(parts[1].trim())
+        && !/cover|커버|歌ってみた/i.test(parts[1])) {
+        songPart = parts[1];
+    }
     const cleaned = songPart
         .replace(/\[[^\]]*\]|【[^】]*】/g, ' ')
         .replace(/[(（][^)）]*(cover|커버|official|m\/?v|live|라이브|ver\.?|version|歌ってみた)[^)）]*[)）]/gi, ' ')
@@ -676,8 +796,93 @@ if (btnFullscreen) {
     btnFullscreen.addEventListener('click', toggleFullscreen);
 }
 
-// ─── 다음 곡 미리 준비: 지금 곡을 듣는 동안 대기열의 다음 곡 가사를 미리 찾아 둠 ───
-// (서버가 찾은 가사를 저장해 두므로 다음 곡이 시작되면 바로 표시됨)
+// ─── 전체화면 가사 번역 버튼 (오른쪽 위): 외국어 가사를 한국어로 옮겨 원문 아래에 표시 ───
+// 구글 번역(1초 안팎)을 먼저 붙이고, 곡 전체 문맥을 살린 번역이 오면 바꿔 끼움
+const btnTranslate = document.getElementById('btn-translate');
+let translationRequestFor = null; // 지금 번역을 요청 중인 가사 (곡이 바뀌면 늦게 온 결과는 버림)
+
+const fetchTranslation = (lines, title, artist, prefetch = false) => fetch('http://127.0.0.1:8888/translate', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lines, title, artist, prefetch }),
+}).then(r => r.json());
+
+async function requestTranslation() {
+    if (!appConfig.showTranslation || currentLyrics.length === 0) return;
+    const lyrics = currentLyrics;
+    if (lyrics.translationDone || translationRequestFor === lyrics) return;
+    translationRequestFor = lyrics;
+    btnTranslate?.classList.add('loading');
+    try {
+        const res = await fetchTranslation(lyrics.map(l => l.text), lastTitle, lastArtist);
+        if (currentLyrics !== lyrics) return; // 그사이 곡이 바뀜
+        if (res.translations) {
+            lyrics.translationDone = true;
+            res.translations.forEach((tr, i) => { if (lyrics[i] && tr) lyrics[i].tr = tr; });
+            lastLyricIdx = -1; // 번역이 붙은 줄로 바로 다시 그림
+            if (res.ai) { lyrics.aiTranslated = true; updateTranslateBadge(); }
+            else refineTranslation(lyrics); // 구글 번역을 먼저 보여 주고, 문맥 번역이 오면 바꿔 끼움
+        } else if (res.skip) {
+            lyrics.translationDone = true;
+            showToast('한국어 가사라 번역하지 않아요', 1800);
+        } else if (res.error === 'rate_limited') {
+            showToast('번역 요청이 많아 잠시 막혔어요. 조금 뒤 다시 눌러 주세요', 3000);
+        } else {
+            showToast('번역에 실패했어요. 잠시 후 다시 눌러 주세요', 2500);
+        }
+    } catch (e) {
+        showToast('번역 서버에 연결하지 못했어요', 2500);
+    } finally {
+        if (translationRequestFor === lyrics) translationRequestFor = null;
+        btnTranslate?.classList.remove('loading');
+    }
+}
+
+// 문맥 번역 (서버의 NVIDIA 언어 모델): 실패하거나 키가 없으면 조용히 구글 번역을 유지
+// priority: 'current'(지금 곡, 서버가 맨 앞에 세움) / 'next'(다음 곡 미리 번역)
+const fetchAiTranslation = (lines, title, artist, priority = 'current') => fetch('http://127.0.0.1:8888/translate-ai', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lines, title, artist, priority }),
+}).then(r => r.json());
+
+// 지금 곡 번역이 문맥 번역(AI)으로 바뀐 상태면 번역 버튼 오른쪽 아래에 "AI" 표시
+function updateTranslateBadge() {
+    btnTranslate?.classList.toggle('ai', !!(appConfig.showTranslation && currentLyrics.aiTranslated));
+}
+
+async function refineTranslation(lyrics) {
+    try {
+        const res = await fetchAiTranslation(lyrics.map(l => l.text), lastTitle, lastArtist);
+        if (currentLyrics !== lyrics || !res.translations) return;
+        res.translations.forEach((tr, i) => { if (lyrics[i]) lyrics[i].tr = tr || lyrics[i].tr; });
+        lyrics.aiTranslated = true;
+        updateTranslateBadge();
+        if (appConfig.showTranslation) lastLyricIdx = -1;
+    } catch (e) { }
+}
+
+if (btnTranslate) {
+    // 글자 번역 아이콘 (文 → 가). 문맥 번역(AI)이 끝나면 "가"의 ㅏ 아래쪽에 "AI"를 겹쳐 씀
+    //   AI 글자 모양을 따라 둘레만큼 "가"의 획을 지워(마스크) AI가 가 앞에서 뒤를 가리는 것처럼 보이게 함
+    //   (배경색과 관계없이 깔끔하게 비고, 아이콘 자체는 움직이지 않음)
+    btnTranslate.innerHTML = `<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <defs><mask id="tr-ai-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+            <rect width="24" height="24" fill="#fff"/><text class="tr-ai-cut" x="16.2" y="22.2" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="6.4" font-weight="800" letter-spacing="-0.3" fill="#000" stroke="#000" stroke-width="1.8" stroke-linejoin="round">AI</text>
+        </mask></defs>
+        <path d="M3 5h8M7 3v2M9.5 5c-.7 3.2-2.8 5.9-5.5 7.5M5.5 8.5c1 1.7 2.6 3.1 4.5 4"/>
+        <path mask="url(#tr-ai-mask)" d="M13 12.5h3.6c0 2.4-1 4.2-3.3 5.5M19.5 11.5v9M19.5 15.6h2"/>
+        <text class="tr-ai-label" x="16.2" y="22.2" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="6.4" font-weight="800" letter-spacing="-0.3" fill="currentColor" stroke="none">AI</text>
+    </svg>`;
+    btnTranslate.addEventListener('click', () => {
+        appConfig.showTranslation = !appConfig.showTranslation;
+        saveSettings();
+        lastLyricIdx = -1; // 번역 줄을 붙이거나 떼고 다시 그림
+        updateTranslateBadge();
+        requestTranslation();
+    });
+}
+
+// ─── 다음 곡 미리 준비: 지금 곡을 듣는 동안 대기열의 다음 곡 가사를 찾고, 번역을 켜 뒀으면 번역까지 해 둠 ───
+// (서버가 가사·번역을 저장해 두므로 다음 곡이 시작되면 바로 표시됨)
 const PREFETCH_AFTER_MS = 15000; // 곡을 넘기며 둘러보는 중에는 미리 찾지 않도록, 지금 곡을 15초 이상 들었을 때만
 let prefetchedNextId = null;
 
@@ -685,9 +890,16 @@ async function prefetchNextTrack(next) {
     if (!next?.videoId || next.videoId === prefetchedNextId) return;
     prefetchedNextId = next.videoId;
     try {
-        const params = new URLSearchParams({ title: next.title, artist: next.artist || '', album: '', videoId: next.videoId });
+        const params = new URLSearchParams({ title: next.title, artist: next.artist || '', album: '', videoId: next.videoId, prefetch: '1' });
         if (next.duration) params.set('duration', String(Math.round(next.duration / 1000)));
-        await fetch(`http://127.0.0.1:8888/lyrics?${params}`);
+        const res = await fetch(`http://127.0.0.1:8888/lyrics?${params}`).then(r => r.json());
+        if (!res?.lyrics || !appConfig.showTranslation) return;
+        const parsed = parseLRC(res.lyrics);
+        if (parsed.embeddedTranslation) return; // 가사에 번역이 들어 있는 곡
+        const lines = parsed.map(l => l.text);
+        if (!lines.length) return;
+        await fetchTranslation(lines, next.title, next.artist, true);
+        await fetchAiTranslation(lines, next.title, next.artist, 'next');
     } catch (e) { /* 미리 준비 실패는 무시 (곡이 시작되면 평소처럼 찾음) */ }
 }
 
@@ -918,7 +1130,10 @@ async function syncWithServer() {
         const track = await fetch('http://127.0.0.1:8888/current-track').then(r => r.json());
         const fetchedAt = performance.now();
         applyRemoteVolume(track);
-        if (track.next && track.playing && track.progress > PREFETCH_AFTER_MS) prefetchNextTrack(track.next);
+        // 다음 곡이 지금 곡과 같은 영상으로 잡힌 경우는 건너뜀 (같은 곡을 두 번 검색하지 않게)
+        // 지금 곡 가사 찾기가 끝난 뒤에만 (지금 곡 번역보다 다음 곡이 먼저 서버에 들어가지 않게)
+        if (track.next && track.next.videoId !== track.videoId && track.playing && track.progress > PREFETCH_AFTER_MS
+            && lyricsSettledTitle === track.title) prefetchNextTrack(track.next);
 
         // 진행 시간은 측정 시점 기준이므로, 그 뒤로 흐른 시간(전송·폴링 지연)만큼 보정
         if (track.playing && track.sampledAt) {
@@ -992,6 +1207,7 @@ async function syncWithServer() {
                 lastArtist = track.artist;
                 lastLyricIdx = -1;
                 currentLyrics = [];
+                updateTranslateBadge();
 
                 const trackInfo = document.getElementById('track-info');
                 const lyricsContainer = document.getElementById('lyrics-container');
@@ -1482,6 +1698,8 @@ function applyConfigToApp() {
     document.body.classList.toggle('show-lyrics', !!appConfig.showLyrics);
     document.getElementById('btn-lyrics')?.setAttribute('aria-pressed', String(!!appConfig.showLyrics));
     document.getElementById('btn-lyrics')?.classList.toggle('active', !!appConfig.showLyrics);
+    document.getElementById('btn-translate')?.classList.toggle('active', !!appConfig.showTranslation);
+    document.getElementById('btn-translate')?.setAttribute('aria-pressed', String(!!appConfig.showTranslation));
     applyGradient(null);
 
     ipcRenderer.send('update-system-settings', {
@@ -1520,6 +1738,37 @@ function disableAutoFade() {
     if (bar) { bar.style.transition = 'background 1.5s ease, opacity 0.15s ease'; bar.style.opacity = appConfig.opacity; }
     document.getElementById('opacity-section')?.classList.remove('section-disabled');
 }
+
+// 설정 창: NVIDIA API 키 (AI 가사 문맥 번역용) — 메인 프로세스가 이 컴퓨터에만 암호화해 저장
+function showNvidiaKeyStatus(status) {
+    const el = document.getElementById('nvidia-key-status');
+    if (!el) return;
+    el.textContent = !status.set ? '미설정' : `${status.source === 'env' ? '환경 변수' : '사용 중'} · ${status.masked}`;
+    el.classList.toggle('set', !!status.set);
+}
+ipcRenderer.invoke('get-nvidia-key-status').then(showNvidiaKeyStatus).catch(() => { });
+
+async function saveNvidiaKey(value) {
+    const input = document.getElementById('nvidia-key-input');
+    const status = await ipcRenderer.invoke('set-nvidia-key', value);
+    showNvidiaKeyStatus(status);
+    if (status.error === 'format') return showToast('nvapi-로 시작하는 키를 붙여 넣어 주세요', 2200);
+    if (status.error) return showToast('키를 저장하지 못했어요', 2200);
+    if (input) input.value = ''; // 입력한 키는 화면에 남기지 않음
+    showToast(value ? 'NVIDIA API 키를 저장했어요' : 'NVIDIA API 키를 삭제했어요', 1800);
+    // 번역을 켜 둔 곡이면 새 키로 바로 문맥 번역 시도
+    if (value && appConfig.showTranslation && currentLyrics.translationDone && !currentLyrics.aiTranslated && !currentLyrics.embeddedTranslation) {
+        refineTranslation(currentLyrics);
+    }
+}
+document.getElementById('nvidia-key-save')?.addEventListener('click', () => {
+    const value = document.getElementById('nvidia-key-input')?.value.trim();
+    if (value) saveNvidiaKey(value);
+});
+document.getElementById('nvidia-key-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.value.trim()) saveNvidiaKey(e.target.value.trim());
+});
+document.getElementById('nvidia-key-clear')?.addEventListener('click', () => saveNvidiaKey(''));
 
 document.getElementById('opacity-slider')?.addEventListener('input', (e) => {
     appConfig.opacity = parseFloat(e.target.value);

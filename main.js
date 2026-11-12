@@ -1,5 +1,56 @@
-const { app, BrowserWindow, screen, Tray, Menu, nativeImage, nativeTheme, globalShortcut, ipcMain, powerSaveBlocker } = require('electron');
+const { app, BrowserWindow, screen, Tray, Menu, nativeImage, nativeTheme, globalShortcut, ipcMain, powerSaveBlocker, safeStorage } = require('electron');
 const path = require('path');
+const fs = require('fs');
+
+// ─── NVIDIA API 키 (AI 가사 번역용) ─────────────────────
+// 설정 창에서 입력한 키를 이 컴퓨터의 앱 데이터 폴더에 암호화해 저장 (macOS 키체인 / Windows DPAPI)
+// 서버(server.js)는 같은 프로세스에서 process.env.NVIDIA_API_KEY를 읽음. 설정 키 > 실행 시 환경 변수 > 셸 설정(~/.zshrc) 순
+const launchEnvNvidiaKey = process.env.NVIDIA_API_KEY || '';
+let savedNvidiaKey = '';
+const nvidiaKeyFile = () => path.join(app.getPath('userData'), 'nvidia-key.bin');
+
+function applyNvidiaKey() {
+    const key = savedNvidiaKey || launchEnvNvidiaKey;
+    if (key) process.env.NVIDIA_API_KEY = key;
+    else delete process.env.NVIDIA_API_KEY;
+}
+
+function loadNvidiaKey() {
+    try {
+        const buf = fs.readFileSync(nvidiaKeyFile());
+        savedNvidiaKey = safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(buf) : buf.toString('utf8');
+    } catch (e) { savedNvidiaKey = ''; }
+    applyNvidiaKey();
+}
+
+// 화면에는 앞 6자(nvapi-)와 끝 4자만 보여줌
+function nvidiaKeyStatus() {
+    const mask = (k) => `${k.slice(0, 6)}••••${k.slice(-4)}`;
+    if (savedNvidiaKey) return { set: true, source: 'settings', masked: mask(savedNvidiaKey) };
+    if (launchEnvNvidiaKey) return { set: true, source: 'env', masked: mask(launchEnvNvidiaKey) };
+    return { set: false };
+}
+
+ipcMain.handle('get-nvidia-key-status', () => nvidiaKeyStatus());
+
+ipcMain.handle('set-nvidia-key', (event, input) => {
+    const key = String(input || '').trim();
+    if (key && !/^nvapi-[\w-]{20,}$/.test(key)) return { ...nvidiaKeyStatus(), error: 'format' };
+    try {
+        if (key) {
+            const data = safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(key) : Buffer.from(key, 'utf8');
+            fs.mkdirSync(path.dirname(nvidiaKeyFile()), { recursive: true });
+            fs.writeFileSync(nvidiaKeyFile(), data, { mode: 0o600 });
+        } else {
+            fs.rmSync(nvidiaKeyFile(), { force: true });
+        }
+        savedNvidiaKey = key;
+        applyNvidiaKey();
+        return nvidiaKeyStatus();
+    } catch (e) {
+        return { ...nvidiaKeyStatus(), error: 'save' };
+    }
+});
 
 // ─── 전역 창 참조 및 상태 ────────────────────────────────
 let win;
@@ -9,6 +60,8 @@ let currentWidgetStyle = 'eq';
 
 // ─── 2. 앱 실행 및 메인 윈도우 생성 ───────────────────────
 app.whenReady().then(() => {
+    // 저장해 둔 NVIDIA API 키를 서버가 읽을 수 있게 먼저 불러옴
+    loadNvidiaKey();
     // 통합 서버 구동
     require('./server.js');
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Music Ultimate Integration (Ultra Light v9.0)
 // @namespace    http://tampermonkey.net/
-// @version      9.1
+// @version      9.3
 // @author       You
 // @match        https://music.youtube.com/*
 // @match        https://www.youtube.com/embed/*
@@ -264,14 +264,30 @@
     }
 
     // 재생 목록(대기열)에서 다음 곡 (위젯이 다음 곡 가사·번역을 미리 준비하는 데 사용)
-    function getNextTrack() {
+    // 대기열은 곡마다 "음원 버전 + 영상 버전" 한 묶음(wrapper)으로 들어 있고 한쪽은 숨겨져 있음
+    //   → 바로 다음 항목이 아니라, 지금 곡 묶음 다음 묶음에서 화면에 보이는 쪽을 다음 곡으로 사용
+    //   (그렇지 않으면 지금 곡의 숨겨진 짝(뮤직비디오 등)을 다음 곡으로 잘못 읽음)
+    const QUEUE_GROUP = 'ytmusic-playlist-panel-video-wrapper-renderer';
+    const queueItemVideoId = (item) => item.data?.videoId || item.__data?.data?.videoId
+        || item.querySelector('a[href*="watch?v="]')?.href.match(/[?&]v=([\w-]{11})/)?.[1] || '';
+    function getNextTrack(currentVideoId) {
         const items = [...document.querySelectorAll('ytmusic-player-queue ytmusic-player-queue-item')];
-        const current = items.findIndex(item => item.hasAttribute('selected') || item.selected);
-        const next = current >= 0 ? items[current + 1] : null;
-        if (!next) return null;
+        const isSelected = (item) => item.hasAttribute('selected') || item.selected;
+        // 지금 곡 위치: 선택 표시 + 같은 영상 → 같은 영상 → 선택 표시 순 (선택 표시가 다른 항목에 남아 있는 경우가 있음)
+        let current = items.findIndex(item => isSelected(item) && queueItemVideoId(item) === currentVideoId);
+        if (current < 0 && currentVideoId) current = items.findIndex(item => queueItemVideoId(item) === currentVideoId);
+        if (current < 0) current = items.findIndex(isSelected);
+        if (current < 0) return null;
+        const groupOf = (item) => item.closest(QUEUE_GROUP) || item;
+        const currentGroup = groupOf(items[current]);
+        // 지금 곡 묶음과 지금 곡과 같은 영상은 다음 곡이 아님
+        const after = items.filter((item, i) => i > current && groupOf(item) !== currentGroup && queueItemVideoId(item) !== currentVideoId);
+        if (after.length === 0) return null;
+        // 숨겨진 짝은 화면에 그려지지 않으므로 보이는 항목을 우선 (대기열 창이 닫혀 모두 안 보이면 다음 묶음의 첫 항목)
+        const next = after.find(item => item.getClientRects().length > 0)
+            || after.find(item => groupOf(item) === groupOf(after[0]) && !item.hasAttribute('hidden')) || after[0];
         const text = (sel) => (next.querySelector(sel)?.getAttribute('title') || next.querySelector(sel)?.textContent || '').trim();
-        const videoId = next.data?.videoId || next.__data?.data?.videoId
-            || next.querySelector('a[href*="watch?v="]')?.href.match(/[?&]v=([\w-]{11})/)?.[1] || '';
+        const videoId = queueItemVideoId(next);
         const title = text('.song-title');
         if (!videoId || !title) return null;
         return {
@@ -332,7 +348,7 @@
             // 위젯의 소리 조절 슬라이더에 현재 볼륨 표시 (0~100)
             volume: player?.getVolume ? player.getVolume() : (video ? Math.round(video.volume * 100) : undefined),
             muted: player?.isMuted ? player.isMuted() : !!video?.muted,
-            next: getNextTrack()
+            next: getNextTrack(info.videoId)
         };
 
         fetch("http://127.0.0.1:8888/update-state", {
